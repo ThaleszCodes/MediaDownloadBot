@@ -1,5 +1,5 @@
 // SHA-256 verifier of a random backend-only credential. Override via Edge secrets for rotation.
-const credentialHash = Deno.env.get('BOT_ACCESS_SECRET_SHA256') ?? 'be4c8b83d50a7cca6cc73c688c5f03537650676630220fa7cdc04c66216ca727';
+const credentialHash = Deno.env.get('BOT_ACCESS_SECRET_SHA256') ?? '3a71828280f311c7c20d17ca46747eaf79363fe54fa7f38f068ae0a18ff42e8c';
 Deno.serve(async (req: Request) => {
   if (req.method !== 'POST') return new Response('method', { status: 405 });
   const secret = req.headers.get('X-Bot-Secret') ?? '';
