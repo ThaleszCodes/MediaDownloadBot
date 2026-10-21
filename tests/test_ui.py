@@ -81,3 +81,14 @@ class ChatUI(unittest.IsolatedAsyncioTestCase):
                 await bot.menu_action(self.update(q),None)
             self.assertEqual(q.edit_message_text.await_count,2)
             self.assertNotIn('Carregando',q.edit_message_text.await_args.args[0])
+
+    async def test_premium_account_opens_without_termux_timezone_database(self):
+        from zoneinfo import ZoneInfoNotFoundError
+        update=self.update()
+        state={'premium':True,'expires_at':'2026-10-28T15:39:47.241383+00:00',
+               'telegram_id':42,'plan_name':'Semanal','total_delivered':5}
+        with patch('bot.access',AsyncMock(return_value=state)), patch('bot_ui.ZoneInfo',side_effect=ZoneInfoNotFoundError()):
+            await bot.account(update,None)
+        text=update.effective_message.reply_text.await_args.args[0]
+        self.assertIn('Premium está ativo',text)
+        self.assertIn('28/10/2026 às 12h39',text)

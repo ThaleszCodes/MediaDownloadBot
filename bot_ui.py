@@ -1,7 +1,7 @@
 """Portuguese chat presentation. HTML is escaped at every user-input boundary."""
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from html import escape
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from telegram import InlineKeyboardButton as Button, InlineKeyboardMarkup
 
 
@@ -30,7 +30,12 @@ def account_text(state):
     if state['premium']:
         try:
             date = datetime.fromisoformat(state['expires_at'].replace('Z', '+00:00'))
-            expiry = date.astimezone(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m/%Y às %Hh%M')
+            try:
+                local_zone = ZoneInfo('America/Sao_Paulo')
+            except ZoneInfoNotFoundError:
+                # Some Termux installations do not include the IANA timezone database.
+                local_zone = timezone(timedelta(hours=-3), name='Brasília')
+            expiry = date.astimezone(local_zone).strftime('%d/%m/%Y às %Hh%M')
         except (ValueError, TypeError, AttributeError):
             expiry = 'Consulte novamente em instantes'
         return ('💎 <b>Seu Premium está ativo!</b>\n\n' + identity +
