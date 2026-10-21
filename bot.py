@@ -6,13 +6,14 @@ import tempfile
 import time
 import uuid
 from dotenv import load_dotenv
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.error import TelegramError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 import httpx
 from media import album_id, parse_album, fetch_to, client_for
 from transfers import transfer_items
 from access import access, AccessUnavailable
+import bot_ui as ui
 
 log = logging.getLogger(__name__)
 ACTIVE = set()
@@ -20,15 +21,28 @@ LAST = {}
 SLOTS = asyncio.Semaphore(2)
 
 
+async def show(update, text, keyboard=None):
+    keyboard = keyboard if keyboard is not None else ui.menu()
+    options = dict(parse_mode='HTML', reply_markup=keyboard)
+    if update.callback_query:
+        try:
+            await update.callback_query.edit_message_text(text, **options)
+        except TelegramError:
+            # Editing can fail for old or unchanged messages; send a fresh menu.
+            await update.effective_message.reply_text(text, **options)
+    else:
+        await update.effective_message.reply_text(text, **options)
+
+
 async def start(update, context):
-    await update.effective_message.reply_text(
-        'Envie um link público https://www.erome.com/a/IDDOALBUM\n'
-        'Vou mostrar as opções: fotos, vídeos ou todos.\n'
-        'Use somente mídias não explícitas que você tem autorização para baixar.\n'
-        'Limites: 50 mídias, 49 MiB por arquivo e 10 minutos por pedido.\n'
-        'Você tem 5 mídias gratuitas por conta. Consulte /conta.\n'
-        'Não faço classificação automática do conteúdo.')
-    await account(update, context)
+    if update.effective_chat.type != 'private':
+        await update.effective_message.reply_text('👋 Abra minha conversa privada e envie /start para começar.')
+        return
+    try:
+        state = await access(update.effective_user.id)
+    except AccessUnavailable:
+        state = None
+    await show(update, ui.welcome(update.effective_user.first_name, state))
 
 
 async def account(update, context):
@@ -36,13 +50,47 @@ async def account(update, context):
         return
     try:
         state = await access(update.effective_user.id)
-        if state['premium']:
-            text = f"Premium ativo. Vencimento: {state['expires_at']}"
-        else:
-            text = f"Teste grátis: {state['trial_remaining']} mídias restantes.\nEnvios confirmados descontam 1 por foto ou vídeo."
-        await update.effective_message.reply_text(text)
-    except AccessUnavailable as exc:
-        await update.effective_message.reply_text(str(exc))
+        text = ui.account_text(state)
+    except AccessUnavailable:
+        text = '⏳ <b>Seu saldo está indisponível agora</b>\n\nTente novamente em instantes. Seu saldo continua salvo.'
+    await show(update, text)
+
+
+async def help_command(update, context):
+    if update.effective_chat.type == 'private':
+        await show(update, ui.HELP, ui.back())
+
+
+async def plans(update, context):
+    if update.effective_chat.type == 'private':
+        await show(update, ui.PLANS)
+
+
+async def menu_action(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not query.message or query.message.chat.type != 'private':
+        return
+    action = query.data.split(':', 1)[1]
+    if action == 'home':
+        await start(update, context)
+    elif action == 'account':
+        await account(update, context)
+    elif action == 'help':
+        await help_command(update, context)
+    elif action == 'plans':
+        await plans(update, context)
+    elif action == 'download':
+        await show(update, ui.DOWNLOAD, ui.back())
+
+
+async def setup_commands(app):
+    await app.bot.set_my_commands([
+        BotCommand('start', '🏠 Abrir menu inicial'),
+        BotCommand('conta', '👤 Consultar saldo e assinatura'),
+        BotCommand('planos', '💎 Conhecer os planos'),
+        BotCommand('help', '❓ Como usar o bot'),
+    ])
 
 
 async def link(update, context):
@@ -50,49 +98,48 @@ async def link(update, context):
         return
     try:
         aid = album_id(update.message.text)
-    except ValueError as exc:
-        await update.message.reply_text(str(exc))
+    except ValueError:
+        await show(update, '🔗 <b>Preciso de um link de álbum válido</b>\n\nEnvie só o link, neste formato:\n<code>https://www.erome.com/a/IDDOALBUM</code>\n\nVocê pode consultar <b>Como funciona</b> no menu.')
         return
     keyboard = [[InlineKeyboardButton(label, callback_data=f'{kind}:{aid}')]
-                for label, kind in [('Baixar fotos', 'photo'), ('Baixar vídeos', 'video'), ('Baixar Todos', 'all')]]
-    await update.message.reply_text('O que você quer baixar?', reply_markup=InlineKeyboardMarkup(keyboard))
+                for label, kind in [('📸 Baixar fotos', 'photo'), ('🎬 Baixar vídeos', 'video'), ('📦 Baixar todos', 'all')]]
+    await update.message.reply_text('🔗 <b>Link recebido!</b>\n\nO que você quer baixar deste álbum? 👇', parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def download(query, kind, aid):
     url = f'https://www.erome.com/a/{aid}'
-    status = await query.message.reply_text('Consultando álbum…')
+    status = await query.message.reply_text('🔎 Buscando as mídias do seu álbum…')
     sent, failed = 0, 0
     async with client_for(url) as client:
         html = await fetch_to(client, url, 4 * 1024 * 1024)
         items = [(k, u) for k, u in parse_album(html, url) if kind == 'all' or kind == k]
         if not items:
-            await status.edit_text('Este álbum não tem mídias desse tipo.')
+            await status.edit_text('📭 Não encontrei esse tipo de mídia no álbum. Envie o link de novo e escolha outra opção.')
             return
         job = str(uuid.uuid4())
         reservation = await access(query.from_user.id, 'reserve', job, len(items))
         quota = reservation['quota']
         if quota == 0:
-            await status.edit_text('Você já tem um pedido reservado. Consulte o suporte.' if reservation.get('busy')
-                                   else 'Suas 5 mídias gratuitas acabaram. As assinaturas ainda estão em preparação.')
+            await status.edit_text('⏳ Seu pedido anterior ainda tem mídias reservadas. Se ele foi interrompido, será necessário revisar o saldo antes de tentar novamente.' if reservation.get('busy')
+                                   else '🎁 Você usou suas 5 mídias grátis! As assinaturas estão em preparação. Acompanhe a disponibilidade em /planos.')
             return
         items = items[:quota]
 
         async def progress(sent, failed):
             await access(query.from_user.id, 'progress', job, sent)
             try:
-                await status.edit_text(f'Enviando em álbuns · {sent}/{len(items)} enviados · {failed} falhas')
+                await status.edit_text(ui.progress(sent, failed, len(items)), parse_mode='HTML')
             except TelegramError:
                 pass  # A progress message must never interrupt the transfer.
 
-        await status.edit_text(f'Preparando {len(items)} mídias · até 3 downloads simultâneos…')
+        await status.edit_text(f'📦 <b>Preparando {len(items)} mídia(s)</b>\n\nVou enviar até o limite disponível na sua conta.\n<i>Já já seus arquivos aparecem por aqui…</i>', parse_mode='HTML')
         with tempfile.TemporaryDirectory(prefix='media-bot-') as tmp:
             sent, failed = await transfer_items(
                 client, items, tmp, query.get_bot(), query.message.chat_id, progress)
         # Only release reservations after a fully confirmed transfer. In a crash or
         # ambiguous Telegram timeout, keep the reservation for support reconciliation.
         await access(query.from_user.id, 'finish', job, sent)
-    await status.edit_text(f'Concluído: {sent} enviados e {failed} falhas.\n'
-                           'Falhas podem ser arquivos grandes, indisponíveis ou recusados pelo Telegram.')
+    await status.edit_text(ui.complete(sent, failed), parse_mode='HTML', reply_markup=ui.again())
 
 
 async def choose(update, context):
@@ -102,13 +149,13 @@ async def choose(update, context):
         return
     uid = query.from_user.id
     if uid in ACTIVE:
-        await query.answer('Você já tem um download em andamento.', show_alert=True)
+        await query.answer('⏳ Já estou preparando seu álbum. Aguarde ele terminar.', show_alert=True)
         return
     if time.monotonic() - LAST.get(uid, -100) < 30:
-        await query.answer('Aguarde 30 segundos entre pedidos.', show_alert=True)
+        await query.answer('⏱ Aguarde alguns segundos antes de iniciar outro pedido.', show_alert=True)
         return
     kind, aid = query.data.split(':', 1)
-    await query.answer('Pedido recebido')
+    await query.answer('✅ Vamos lá!')
     ACTIVE.add(uid)
     LAST[uid] = time.monotonic()
     # Bound memory without retaining a permanent user history.
@@ -119,16 +166,20 @@ async def choose(update, context):
                 LAST.pop(key, None)
     try:
         await query.edit_message_reply_markup(reply_markup=None)
-        await query.message.reply_text('Pedido na fila. Até dois pedidos simultâneos.')
+        await query.message.reply_text('⏳ Pedido recebido! Vou começar assim que houver uma vaga na fila.')
         async with SLOTS:
             await asyncio.wait_for(download(query, kind, aid), timeout=600)
     except asyncio.TimeoutError:
-        await query.message.reply_text('Tempo limite atingido. As mídias já enviadas permanecem no chat.')
+        await query.message.reply_text('⏳ Este pedido demorou mais que o esperado e foi interrompido. As mídias já enviadas continuam aqui. Se o saldo ficou reservado, será necessário revisar o pedido.')
     except (ValueError, httpx.HTTPError, AccessUnavailable) as exc:
-        message = str(exc) if isinstance(exc, (ValueError, AccessUnavailable)) else 'Não consegui acessar o álbum. Tente novamente mais tarde.'
+        message = ('⏳ Não consegui consultar seu acesso. Tente novamente em instantes.' if isinstance(exc, AccessUnavailable) else '⚠️ Não consegui concluir este álbum. Confira se ele é público e está disponível, ou tente outro link. Se o envio já tinha começado, seu saldo pode precisar de revisão.')
         await query.message.reply_text(message)
     except TelegramError:
         log.warning('Falha de comunicação com Telegram (detalhes omitidos).')
+        try:
+            await query.message.reply_text('📡 A conexão com o Telegram foi interrompida. Confira as mídias recebidas; para evitar duplicação, não reenviei os arquivos automaticamente.', reply_markup=ui.again())
+        except TelegramError:
+            pass
     finally:
         ACTIVE.discard(uid)
 
@@ -138,7 +189,7 @@ async def error_handler(update, context):
     log.error('Erro não tratado: %s', type(context.error).__name__)
     if update and update.effective_message:
         try:
-            await update.effective_message.reply_text('Ocorreu um erro. Tente novamente.')
+            await update.effective_message.reply_text('⚠️ Algo não saiu como esperado. Tente novamente em instantes ou abra o menu com /start.')
         except TelegramError:
             pass
 
@@ -149,10 +200,13 @@ def main():
     if not token:
         raise SystemExit('Preencha TELEGRAM_BOT_TOKEN no arquivo .env antes de iniciar.')
     logging.basicConfig(level=logging.WARNING)
-    app = Application.builder().token(token).concurrent_updates(8).build()
-    app.add_handler(CommandHandler(['start', 'help'], start))
+    app = Application.builder().token(token).concurrent_updates(8).post_init(setup_commands).build()
+    app.add_handler(CommandHandler('start', start))
+    app.add_handler(CommandHandler('help', help_command))
+    app.add_handler(CommandHandler('planos', plans))
     app.add_handler(CommandHandler('conta', account))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, link))
+    app.add_handler(CallbackQueryHandler(menu_action, pattern=r'^menu:(home|account|help|plans|download)$'))
     app.add_handler(CallbackQueryHandler(choose, pattern=r'^(photo|video|all):[A-Za-z0-9]+$'))
     app.add_error_handler(error_handler)
     print('Bot iniciado. Abra o Telegram e envie /start. Ctrl+C para parar.', flush=True)

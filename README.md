@@ -172,3 +172,10 @@ node --experimental-strip-types --test tests/webhook.test.mjs
 `tests/webhook.sql` testa a concessão real no banco com fixtures e rollback,
 incluindo replay, renovação, cancelamento, chargeback fora de ordem, valores inválidos,
 identidade pendente e mês de calendário. Não cria cobranças reais.
+
+## Menu do Telegram
+
+O bot usa mensagens HTML e botões inline para baixar, consultar a conta, ver planos
+(em breve) e abrir ajuda. `/start`, `/conta`, `/planos` e `/help` ficam no menu de
+comandos. Nomes de usuários são escapados antes da formatação. Datas de vencimento
+são mostradas no fuso de Brasília. Esta atualização visual não ativa vendas.
