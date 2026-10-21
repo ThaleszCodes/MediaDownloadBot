@@ -6,6 +6,7 @@ import os
 import tempfile
 import time
 import uuid
+from contextlib import asynccontextmanager, suppress
 from dotenv import load_dotenv
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.error import TelegramError
@@ -20,7 +21,7 @@ log = logging.getLogger(__name__)
 ACTIVE = set()
 LAST = {}
 SLOTS = asyncio.Semaphore(2)
-VERSION = '2026.10.21-telegram-diagnostics'
+VERSION = '2026.10.21-launch'
 
 
 def safe_error(error):
@@ -32,6 +33,25 @@ def safe_error(error):
     detail = re.sub(r'https?://[^\s]+', '[URL oculta]', detail)
     detail = re.sub(r'\b\d{5,}:[A-Za-z0-9_-]{20,}', '[token oculto]', detail)
     return f'{type(error).__name__}: {detail[:300]}'
+
+
+@asynccontextmanager
+async def activity(query):
+    """Renew Telegram's activity indicator during queueing, discovery and transfers."""
+    async def heartbeat():
+        while True:
+            try:
+                await query.get_bot().send_chat_action(chat_id=query.message.chat_id, action='typing')
+            except TelegramError:
+                pass
+            await asyncio.sleep(4)
+    task = asyncio.create_task(heartbeat())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 async def answer_callback(query, text=None):
@@ -73,7 +93,7 @@ async def account(update, context):
         state = await access(update.effective_user.id, 'account')
         text = ui.account_text(state)
     except AccessUnavailable:
-        text = '⏳ <b>Seu saldo está indisponível agora</b>\n\nTente novamente em instantes. Seu saldo continua salvo.'
+        text = '⏳ <b>Sua conta está indisponível agora</b>\n\nTente novamente em instantes. Seus dados continuam salvos.'
     await show(update, text)
 
 
@@ -104,6 +124,7 @@ async def subscribe(update, context):
             [InlineKeyboardButton('🌐 Continuar no site', url=result['checkout_url'])],
             [InlineKeyboardButton('🔄 Verificar pagamento', callback_data='menu:account')],
             [InlineKeyboardButton('⬅️ Voltar aos planos', callback_data='menu:plans')],
+            [ui.support_button()],
         ])
         await show(update, '🔐 <b>Seu link individual está pronto</b>\n\n'
                    'Continue no site da Cakto para conferir o plano e efetuar o pagamento.\n'
@@ -138,7 +159,7 @@ async def menu_action(update, context):
 async def setup_commands(app):
     await app.bot.set_my_commands([
         BotCommand('start', '🏠 Abrir menu inicial'),
-        BotCommand('conta', '👤 Consultar saldo e assinatura'),
+        BotCommand('conta', '👤 Consultar conta e assinatura'),
         BotCommand('planos', '💎 Conhecer os planos'),
         BotCommand('help', '❓ Como usar o bot'),
     ])
@@ -161,7 +182,7 @@ async def link(update, context):
         return
     keyboard = [[InlineKeyboardButton(label, callback_data=f'{kind}:{aid}')]
                 for label, kind in [('📸 Baixar fotos', 'photo'), ('🎬 Baixar vídeos', 'video'), ('📦 Baixar todos', 'all')]]
-    await update.message.reply_text('🔗 <b>Link recebido!</b>\n\nO que você quer baixar deste álbum? 👇', parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text('🔗 <b>Link recebido!</b>\n\nO que você quer baixar deste álbum? 👇\n\n' + ui.NOTICE, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def download(query, kind, aid):
@@ -178,8 +199,8 @@ async def download(query, kind, aid):
         reservation = await access(query.from_user.id, 'reserve', job, len(items))
         quota = reservation['quota']
         if quota == 0:
-            await status.edit_text('⏳ Seu pedido anterior ainda tem mídias reservadas. Se ele foi interrompido, será necessário revisar o saldo antes de tentar novamente.' if reservation.get('busy')
-                                   else '🎁 Você usou suas 5 mídias grátis! As assinaturas estão em preparação. Acompanhe a disponibilidade em /planos.')
+            await status.edit_text('⏳ Seu pedido anterior ainda tem mídias reservadas. Se ele foi interrompido, fale com o suporte para revisar o pedido.' if reservation.get('busy')
+                                   else '🎁 Você usou suas 5 mídias grátis! Assine em /planos para continuar com downloads ilimitados durante o plano.')
             return
         items = items[:quota]
 
@@ -190,7 +211,8 @@ async def download(query, kind, aid):
             except TelegramError:
                 pass  # A progress message must never interrupt the transfer.
 
-        await status.edit_text(f'📦 <b>Preparando {len(items)} mídia(s)</b>\n\nVou enviar até o limite disponível na sua conta.\n<i>Já já seus arquivos aparecem por aqui…</i>', parse_mode='HTML')
+        access_note = ('🎁 Usando seu teste grátis.' if reservation.get('trial') else '♾️ Assinatura ativa: downloads ilimitados.')
+        await status.edit_text(f'📦 <b>Preparando {len(items)} mídia(s)</b>\n\n{access_note}\n📥 Baixando os arquivos para começar o envio…', parse_mode='HTML')
         with tempfile.TemporaryDirectory(prefix='media-bot-') as tmp:
             sent, failed = await transfer_items(
                 client, items, tmp, query.get_bot(), query.message.chat_id, progress)
@@ -225,12 +247,12 @@ async def choose(update, context):
     try:
         await query.edit_message_reply_markup(reply_markup=None)
         await query.message.reply_text('⏳ Pedido recebido! Vou começar assim que houver uma vaga na fila.')
-        async with SLOTS:
+        async with activity(query), SLOTS:
             await asyncio.wait_for(download(query, kind, aid), timeout=600)
     except asyncio.TimeoutError:
-        await query.message.reply_text('⏳ Este pedido demorou mais que o esperado e foi interrompido. As mídias já enviadas continuam aqui. Se o saldo ficou reservado, será necessário revisar o pedido.')
+        await query.message.reply_text('⏳ Este pedido demorou mais que o esperado e foi interrompido. As mídias já enviadas continuam aqui. Se houver problema com seu teste grátis, fale com o suporte.')
     except (ValueError, httpx.HTTPError, AccessUnavailable) as exc:
-        message = ('⏳ Não consegui consultar seu acesso. Tente novamente em instantes.' if isinstance(exc, AccessUnavailable) else '⚠️ Não consegui concluir este álbum. Confira se ele é público e está disponível, ou tente outro link. Se o envio já tinha começado, seu saldo pode precisar de revisão.')
+        message = ('⏳ Não consegui consultar seu acesso. Tente novamente em instantes.' if isinstance(exc, AccessUnavailable) else '⚠️ Não consegui concluir este álbum. Confira se ele é público e está disponível, ou tente outro link. Se o envio já tinha começado, fale com o suporte se houver problema com o teste grátis.')
         await query.message.reply_text(message)
     except TelegramError as exc:
         log.warning('Falha no pedido: %s', safe_error(exc))

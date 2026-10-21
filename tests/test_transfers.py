@@ -25,14 +25,16 @@ class Pipeline(unittest.IsolatedAsyncioTestCase):
     def items(self, count):
         return [('photo' if i % 2 else 'video', str(i)) for i in range(count)]
 
-    async def test_batches_ten_then_single_preserve_order_and_cleanup(self):
+    async def test_first_batch_starts_early_and_preserves_order_and_cleanup(self):
         with patch.object(t, 'fetch_to', self.fake_fetch):
             result = await t.transfer_items(None, self.items(21), self.tmp.name, self.bot, 1, self.progress)
         self.assertEqual(result, (21, 0))
-        self.assertEqual(self.bot.send_media_group.await_count, 2)
-        self.assertEqual(self.bot.send_video.await_count, 1)
-        media = self.bot.send_media_group.await_args_list[0].kwargs['media']
-        self.assertEqual([m.media.input_file_content for m in media], [str(i).encode() for i in range(10)])
+        self.assertEqual(self.bot.send_media_group.await_count, 3)
+        self.assertEqual(self.bot.send_video.await_count, 0)
+        groups = self.bot.send_media_group.await_args_list
+        self.assertEqual([len(c.kwargs['media']) for c in groups], [3, 10, 8])
+        names = [m.media.filename for c in groups for m in c.kwargs['media']]
+        self.assertEqual(names, [f'{i}.jpg' if i % 2 else f'{i}.mp4' for i in range(21)])
         self.assertEqual(list(Path(self.tmp.name).iterdir()), [])
 
     async def test_download_failure_does_not_stop_other_media(self):
@@ -114,3 +116,29 @@ class Pipeline(unittest.IsolatedAsyncioTestCase):
             task.cancel()
             with self.assertRaises(asyncio.CancelledError): await task
         self.assertEqual(active, 0)
+
+    async def test_upload_streams_open_files_without_loading_them_into_memory(self):
+        observed = []
+        async def send(**kwargs):
+            for media in kwargs['media']:
+                handle = media.media.input_file_content
+                self.assertFalse(isinstance(handle, bytes))
+                self.assertFalse(handle.closed)
+                observed.append(handle.read())
+        self.bot.send_media_group.side_effect = send
+        with patch.object(t, 'fetch_to', self.fake_fetch):
+            await t.transfer_items(None, self.items(3), self.tmp.name, self.bot, 1, self.progress)
+        self.assertEqual(observed, [b'0', b'1', b'2'])
+
+    async def test_first_upload_does_not_wait_for_slow_fourth_download(self):
+        started_upload = asyncio.Event()
+        async def fetch(client, url, limit, path):
+            if int(url) >= 3:
+                await asyncio.wait_for(started_upload.wait(), 1)
+            return await self.fake_fetch(client, url, limit, path)
+        async def send(**kwargs):
+            started_upload.set()
+        self.bot.send_media_group.side_effect = send
+        with patch.object(t, 'fetch_to', fetch):
+            result = await t.transfer_items(None, self.items(13), self.tmp.name, self.bot, 1, self.progress)
+        self.assertEqual(result, (13, 0))

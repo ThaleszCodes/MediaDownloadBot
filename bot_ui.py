@@ -5,22 +5,33 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from telegram import InlineKeyboardButton as Button, InlineKeyboardMarkup
 
 
+SUPPORT_URL = 'https://t.me/Tz_Kys'
+NOTICE = ('⚠️ <b>Importante:</b> talvez nem todas as mídias do álbum sejam baixadas ou enviadas. '
+          'O uso é por sua conta e risco; não nos responsabilizamos por mídias ausentes ou falhas de download e envio.')
+
+
+def support_button():
+    return Button('💬 Suporte humano', url=SUPPORT_URL)
+
+
 def menu():
     return InlineKeyboardMarkup([
         [Button('📥 Baixar mídias', callback_data='menu:download')],
         [Button('👤 Minha conta', callback_data='menu:account'), Button('💎 Planos', callback_data='menu:plans')],
         [Button('❓ Como funciona', callback_data='menu:help')],
+        [support_button()],
     ])
 
 
 def back():
-    return InlineKeyboardMarkup([[Button('🏠 Menu inicial', callback_data='menu:home')]])
+    return InlineKeyboardMarkup([[support_button()], [Button('🏠 Menu inicial', callback_data='menu:home')]])
 
 
 def again():
     return InlineKeyboardMarkup([
         [Button('📥 Baixar outro álbum', callback_data='menu:download')],
-        [Button('👤 Meu saldo', callback_data='menu:account'), Button('🏠 Início', callback_data='menu:home')],
+        [Button('👤 Minha conta', callback_data='menu:account'), Button('🏠 Início', callback_data='menu:home')],
+        [support_button()],
     ])
 
 
@@ -40,7 +51,9 @@ def account_text(state):
             expiry = 'Consulte novamente em instantes'
         return ('💎 <b>Seu Premium está ativo!</b>\n\n' + identity +
                 f"🗓 <b>Plano:</b> {escape(state.get('plan_name') or 'Premium')}\n" +
-                f'📅 <b>Válido até:</b> {expiry}\n<i>Horário de Brasília</i>\n\n' + delivered)
+                f'📅 <b>Válido até:</b> {expiry}\n<i>Horário de Brasília</i>\n\n' +
+                '♾️ <b>Downloads ilimitados enquanto o plano estiver ativo.</b>\n'
+                '📦 Até 50 mídias por pedido e 49 MiB por mídia.\n\n' + delivered)
     remaining = state['trial_remaining']
     reserved = state.get('trial_reserved', 0)
     detail = f"🎁 <b>Grátis disponíveis:</b> {remaining} de 5\n✅ <b>Grátis utilizados:</b> {state.get('trial_used', 5-remaining)}\n"
@@ -53,17 +66,16 @@ def account_text(state):
 def welcome(name, state):
     greeting = escape(name or 'visitante')
     if state is None:
-        badge = '⏳ Seu saldo está indisponível no momento. Tente <b>Minha conta</b> em instantes.'
+        badge = '⏳ Sua conta está indisponível no momento. Tente <b>Minha conta</b> em instantes.'
     elif state['premium']:
-        badge = '💎 <b>Premium ativo</b> — pode enviar seu álbum!'
+        badge = '💎 <b>Premium ativo</b> — downloads ilimitados!\n📦 Até 50 mídias por pedido e 49 MiB por mídia.'
     else:
         badge = f"🎁 Você tem <b>{state['trial_remaining']} mídias grátis</b> disponíveis."
     return (f'👋 <b>Bem-vindo, {greeting}!</b>\n'
             '<b>MediaDownloadBot</b>\n\n'
             'Suas fotos e vídeos, direto na conversa. 📥\n\n'
             '🔗 <b>Envie o link do álbum</b> e escolha o que quer receber.\n\n'
-            f'{badge}\n\n'
-            '<i>Use somente mídias não explícitas, públicas e autorizadas.</i>')
+            f'{badge}\n\n' + NOTICE)
 
 
 DOWNLOAD = ('📥 <b>Vamos baixar seu álbum?</b>\n\n'
@@ -75,19 +87,13 @@ HELP = ('❓ <b>É simples usar</b>\n\n'
         '1️⃣ Envie o link público de um álbum.\n'
         '2️⃣ Escolha fotos, vídeos ou todas as mídias.\n'
         '3️⃣ Receba os arquivos aqui no chat.\n\n'
-        '🎁 <b>Teste grátis:</b> 5 mídias por conta, uma única vez. Se o álbum for maior '
-        'que seu saldo, envio só o que ele permitir. Falhas confirmadas não descontam.\n\n'
-        '📦 <b>Por pedido:</b> até 50 mídias, 49 MiB por arquivo e 10 minutos de processamento.\n'
-        '📱 Um formato incompatível pode chegar como arquivo.\n\n'
-        '⏳ Se um envio for interrompido, o saldo reservado pode precisar de revisão '
-        'para evitar cobrança duplicada.\n\n'
-        '🔒 Apenas conteúdo não explícito e autorizado. O bot não faz classificação visual automática.')
-PLANS = ('💎 <b>Premium — em breve</b>\n\n'
-         '🗓 <b>Semanal</b> · R$5,00 por semana\n'
-         '📅 <b>Mensal</b> · R$15,90 por mês\n\n'
-         'A contratação ainda não está disponível aqui. Estamos concluindo '
-         'a ativação e a vinculação dos pagamentos.\n\n'
-         '🎁 Enquanto isso, você pode usar suas 5 mídias gratuitas e acompanhar o saldo em <b>Minha conta</b>.')
+        '♾️ <b>Assinantes:</b> downloads ilimitados durante a vigência do plano.\n'
+        '🎁 <b>Teste grátis:</b> 5 mídias por conta, uma única vez. Falhas confirmadas não consomem o teste.\n\n'
+        '📦 <b>Por pedido:</b> até 50 mídias, 49 MiB por mídia e 10 minutos de processamento.\n'
+        '⏱ Um pedido por vez; intervalo de 30 segundos entre pedidos.\n'
+        '📱 Um formato incompatível pode chegar como arquivo.\n\n' + NOTICE)
+# Kept as a fallback for integrations importing the old constant.
+PLANS = '💎 Consulte /planos para ver as ofertas disponíveis.'
 
 
 def progress(sent, failed, total):
@@ -119,17 +125,18 @@ def plans_text(offers):
         period = 'por semana' if offer['period_days'] == 7 else 'por mês'
         availability = '' if offer['sales_enabled'] else ' · indisponível no momento'
         lines.append(f"🗓 <b>{escape(offer['name'])}</b> — {money(offer['price_cents'])} {period}{availability}")
-    lines += ['', '📥 Fotos e vídeos direto na conversa.',
+    lines += ['', '♾️ Downloads ilimitados enquanto o plano estiver ativo.',
+              '📥 Fotos e vídeos direto na conversa.',
               '📦 Até 50 mídias por pedido e 49 MiB por arquivo.',
               '⏱ Um pedido por vez; intervalo de 30 segundos entre pedidos.',
               '', 'A compra é concluída no site externo. Confira as condições de renovação no checkout.',
-              'O acesso é liberado após a confirmação do pagamento.']
+              'O acesso é liberado após a confirmação do pagamento.', '', NOTICE]
     return '\n'.join(lines)
 
 
 def plans_keyboard(offers):
     rows = [[Button(f"💎 Assinar {o['name']} · {money(o['price_cents'])}", callback_data='subscribe:'+o['code'])]
             for o in offers if o['sales_enabled']]
-    rows += [[Button('🔄 Verificar meu acesso',callback_data='menu:account')],
+    rows += [[support_button()], [Button('🔄 Verificar meu acesso',callback_data='menu:account')],
              [Button('🏠 Menu inicial',callback_data='menu:home')]]
     return InlineKeyboardMarkup(rows)

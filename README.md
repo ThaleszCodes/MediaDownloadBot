@@ -211,3 +211,35 @@ continuam bloqueados. `payment_details` guarda apenas valores normalizados e IDs
 sem cartão, CPF, e-mail ou segredo do webhook. Eventos antigos sem esses campos
 precisam ser reenviados a partir da compra real na Cakto; nunca sintetize uma
 aprovação para liberar acesso. `tests/coupons.sql` valida os casos com rollback.
+
+
+## Atualização para lançamento — 21/10/2026
+
+Assinantes têm downloads ilimitados durante a vigência do plano, sem saldo de
+mídias. Permanecem os limites de 50 mídias por pedido, 49 MiB por mídia, um pedido
+por usuário, intervalo de 30 segundos e até 10 minutos de processamento. O teste
+gratuito continua limitado a 5 mídias. A reserva técnica de cada pedido no backend
+não é uma cobrança nem um saldo da assinatura.
+
+O indicador de atividade do Telegram é renovado a cada 4 segundos, desde a fila
+até o término do pedido, e para em falhas, cancelamentos e conclusão. A mensagem
+de status informa busca, preparação e envios concluídos. Suporte humano abre
+https://t.me/Tz_Kys. O aviso de possível envio incompleto aparece no início,
+na ajuda, nos planos e antes da escolha de download; os avisos sobre conteúdo
+explícito foram removidos da interface do bot.
+
+O primeiro lote é enviado após 3 arquivos; os próximos continuam agrupando até
+10 arquivos / 64 MiB. Downloads continuam em paralelo (máximo global de 3),
+com sobreposição ao envio. Uploads usam InputFile com read_file_handle=False,
+mantendo os arquivos abertos durante a requisição e reabrindo-os em RetryAfter.
+Isso evita carregar álbuns inteiros em RAM. A velocidade final depende do site,
+Telegram e hospedagem; não há garantia de multiplicador de velocidade.
+
+Bot-Hosting: importar main, Python 3.12, requirements.txt, iniciar python bot.py.
+Configurar TELEGRAM_BOT_TOKEN, SUPABASE_URL e BOT_ACCESS_SECRET no painel.
+Parar a instância do Termux antes de iniciar a hospedagem. Não é necessário
+mudar webhook, funções Supabase ou esquema de dados para esta atualização.
+Validação local: 32 testes Python com Telegram e mídia simulados, incluindo fluxo
+completo de download de assinante sem teste grátis, streaming, ordenação, falhas,
+limites de concorrência e cancelamento. O teste real na hospedagem deve conferir
+memória, armazenamento temporário e tempo de transferência com um álbum pequeno.

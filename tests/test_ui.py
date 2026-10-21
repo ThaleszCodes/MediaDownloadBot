@@ -19,7 +19,7 @@ class ChatUI(unittest.IsolatedAsyncioTestCase):
         call=update.effective_message.reply_text.await_args
         self.assertIn('&lt;Kaleby &amp; teste&gt;',call.args[0])
         self.assertEqual(call.kwargs['parse_mode'],'HTML')
-        keys=[b.callback_data for row in call.kwargs['reply_markup'].inline_keyboard for b in row]
+        keys=[b.callback_data for row in call.kwargs['reply_markup'].inline_keyboard for b in row if b.callback_data]
         self.assertEqual(set(keys),{'menu:download','menu:account','menu:plans','menu:help'})
 
     async def test_menu_routes_to_account_and_formats_local_time(self):
@@ -104,3 +104,27 @@ class ChatUI(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(token,result)
         self.assertNotIn('private-secret',result)
         self.assertNotIn('https://',result)
+
+    async def test_premium_is_unlimited_and_support_is_direct(self):
+        state={'premium':True,'expires_at':'2026-10-28T15:39:47Z','trial_remaining':0}
+        for text in (ui.account_text(state), ui.welcome('Teste',state), ui.plans_text([])):
+            self.assertIn('ilimitados', text)
+            self.assertNotIn('saldo', text.casefold())
+            self.assertIn('50', text)
+            self.assertIn('49 MiB', text)
+        for keyboard in (ui.menu(),ui.back(),ui.again(),ui.plans_keyboard([])):
+            self.assertTrue(any(b.url=='https://t.me/Tz_Kys' for row in keyboard.inline_keyboard for b in row))
+        self.assertIn('talvez nem todas',ui.NOTICE)
+        self.assertNotIn('explícit', ui.HELP + ui.welcome('Teste',state))
+
+    async def test_activity_stops_on_cancellation_and_handles_telegram_failure(self):
+        import asyncio
+        from telegram.error import NetworkError
+        fake=SimpleNamespace(send_chat_action=AsyncMock(side_effect=NetworkError('offline')))
+        query=SimpleNamespace(get_bot=lambda:fake,message=SimpleNamespace(chat_id=42))
+        async with bot.activity(query):
+            await asyncio.sleep(0)
+            fake.send_chat_action.assert_awaited_once()
+        calls=fake.send_chat_action.await_count
+        await asyncio.sleep(0)
+        self.assertEqual(fake.send_chat_action.await_count,calls)

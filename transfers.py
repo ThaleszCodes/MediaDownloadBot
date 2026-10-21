@@ -6,7 +6,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import httpx
-from telegram import InputMediaPhoto, InputMediaVideo
+from telegram import InputMediaPhoto, InputMediaVideo, InputFile
 from telegram.error import BadRequest, RetryAfter, TelegramError, NetworkError
 
 from media import fetch_to, MAX_FILE
@@ -78,13 +78,13 @@ async def send_batch(bot, chat_id, batch):
             with path.open('rb') as stream:
                 method = bot.send_photo if kind == 'photo' else bot.send_video
                 key = 'photo' if kind == 'photo' else 'video'
-                return await method(**{key: stream}, **options)
+                return await method(**{key: InputFile(stream, read_file_handle=False)}, **options)
         try:
             await telegram_call(attempt)
         except BadRequest:
             async def document():
                 with path.open('rb') as stream:
-                    return await bot.send_document(document=stream, **options)
+                    return await bot.send_document(document=InputFile(stream, read_file_handle=False), **options)
             await telegram_call(document)
 
     try:
@@ -95,7 +95,7 @@ async def send_batch(bot, chat_id, batch):
                     for kind, path, _ in batch:
                         stream = stack.enter_context(path.open('rb'))
                         cls = InputMediaPhoto if kind == 'photo' else InputMediaVideo
-                        media.append(cls(media=stream))
+                        media.append(cls(media=InputFile(stream, attach=True, read_file_handle=False)))
                     return await bot.send_media_group(media=media, **options)
             try:
                 await telegram_call(group)
@@ -149,7 +149,9 @@ async def transfer_items(client, items, directory, bot, chat_id, progress):
                 await flush()
             batch.append((kind, path, size))
             total_bytes += size
-            if len(batch) == 10:
+            # Start delivering after three files instead of waiting for ten.
+            # Later batches stay large to minimize Telegram API requests.
+            if len(batch) == (3 if sent == 0 and failed == 0 else 10):
                 await flush()
         if batch:
             await flush()
