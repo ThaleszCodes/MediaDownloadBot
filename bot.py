@@ -4,13 +4,13 @@ import logging
 import os
 import tempfile
 import time
-from pathlib import Path
 from dotenv import load_dotenv
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.error import BadRequest, TelegramError
+from telegram.error import TelegramError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 import httpx
-from media import album_id, parse_album, fetch_to, client_for, MAX_FILE
+from media import album_id, parse_album, fetch_to, client_for
+from transfers import transfer_items
 
 log = logging.getLogger(__name__)
 ACTIVE = set()
@@ -50,30 +50,16 @@ async def download(query, kind, aid):
         if not items:
             await status.edit_text('Este álbum não tem mídias desse tipo.')
             return
+        async def progress(sent, failed):
+            try:
+                await status.edit_text(f'Enviando em álbuns · {sent}/{len(items)} enviados · {failed} falhas')
+            except TelegramError:
+                pass  # A progress message must never interrupt the transfer.
+
+        await status.edit_text(f'Preparando {len(items)} mídias · até 3 downloads simultâneos…')
         with tempfile.TemporaryDirectory(prefix='media-bot-') as tmp:
-            for index, (media_kind, media_url) in enumerate(items, 1):
-                await status.edit_text(f'Enviando {index}/{len(items)} · {sent} enviados · {failed} falhas')
-                suffix = '.mp4' if media_kind == 'video' else '.jpg'
-                path = Path(tmp) / f'media-{index}{suffix}'
-                try:
-                    await fetch_to(client, media_url, MAX_FILE, path)
-                    with path.open('rb') as stream:
-                        options = dict(chat_id=query.message.chat_id, write_timeout=120, read_timeout=120)
-                        try:
-                            if media_kind == 'photo':
-                                await query.get_bot().send_photo(photo=stream, **options)
-                            else:
-                                await query.get_bot().send_video(video=stream, **options)
-                        except BadRequest:
-                            # Photos with dimensions/size Telegram cannot display are sent intact.
-                            stream.seek(0)
-                            await query.get_bot().send_document(document=stream, **options)
-                    sent += 1
-                except (ValueError, httpx.HTTPError, TelegramError):
-                    failed += 1
-                finally:
-                    path.unlink(missing_ok=True)
-                await asyncio.sleep(1.1)
+            sent, failed = await transfer_items(
+                client, items, tmp, query.get_bot(), query.message.chat_id, progress)
     await status.edit_text(f'Concluído: {sent} enviados e {failed} falhas.\n'
                            'Falhas podem ser arquivos grandes, indisponíveis ou recusados pelo Telegram.')
 
@@ -102,7 +88,7 @@ async def choose(update, context):
                 LAST.pop(key, None)
     try:
         await query.edit_message_reply_markup(reply_markup=None)
-        await query.message.reply_text('Pedido na fila. Até dois downloads simultâneos.')
+        await query.message.reply_text('Pedido na fila. Até dois pedidos simultâneos.')
         async with SLOTS:
             await asyncio.wait_for(download(query, kind, aid), timeout=600)
     except asyncio.TimeoutError:

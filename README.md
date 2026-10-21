@@ -53,9 +53,11 @@ Apenas uma instância por token. Downloads e envios de todos os usuários usam s
 ## Limites e comportamento
 
 - Até 50 mídias por álbum e 49 MiB por arquivo. Sem compressão: arquivos grandes contam como falha.
-- Dois downloads simultâneos, um pedido por pessoa e intervalo de 30 segundos.
+- Dois pedidos simultâneos, até três downloads de mídia simultâneos no total, um pedido por pessoa e intervalo de 30 segundos.
 - Dez minutos por pedido após sair da fila. Temporários apagados ao terminar ou falhar.
-- Envia fotos/vídeos individualmente na ordem do álbum. Se Telegram recusar o formato,
+- Envia fotos/vídeos na ordem do álbum, em grupos de até 10 mídias (até 64 MiB por lote).
+  O próximo download ocorre durante o envio; não há pausa fixa entre arquivos. Um lote
+  com apenas uma mídia é enviado individualmente. Se Telegram recusar o formato,
   tenta documento. Não promete reproduzir todo codec de vídeo no aplicativo.
 - Uma falha não impede os demais arquivos. Não repete automaticamente envios com timeout,
   pois podem ter chegado mesmo sem confirmação.
@@ -71,7 +73,24 @@ source .venv/bin/activate
 python -m unittest discover -s tests -v
 ```
 
-Testes com HTML sintético e HTTP simulado, sem álbuns reais.
+Testes com HTML sintético, HTTP simulado e Telegram simulado, sem álbuns reais.
 Não foi feito envio real no Telegram, pois o token deve ser configurado no seu celular.
 Teste manualmente: /start, link inválido, três botões num álbum não explícito autorizado,
 álbum inexistente e segundo pedido durante download. O parser depende do HTML público atual.
+
+## Atualizar no Termux
+
+Pare o bot com Ctrl+C e execute:
+
+```bash
+git pull origin main
+source .venv/bin/activate
+pip install -r requirements.txt
+python bot.py
+```
+
+O pipeline mantém até três arquivos adiantados por pedido e até três downloads ativos
+no total. Lotes são limitados a 64 MiB de mídia para conter memória, além do overhead
+do Python e HTTP. Reserve espaço temporário no celular (até cerca de 300 MiB por pedido).
+O Telegram pode solicitar uma pausa com RetryAfter: o bot respeita esse tempo.
+A melhoria reduz esperas entre arquivos, mas não aumenta a velocidade da sua conexão.
