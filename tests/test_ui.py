@@ -45,7 +45,7 @@ class ChatUI(unittest.IsolatedAsyncioTestCase):
             with patch('bot.access',AsyncMock(side_effect=lambda user, action='status': [] if action=='plans' else {'premium':False,'trial_remaining':0})):
                 await bot.menu_action(self.update(q),None)
             q.answer.assert_awaited_once()
-            q.edit_message_text.assert_awaited_once()
+            self.assertGreaterEqual(q.edit_message_text.await_count,1)
         self.assertNotIn('https://pay.',ui.PLANS)
 
     async def test_plans_loaded_from_database_generate_subscription_buttons(self):
@@ -70,3 +70,14 @@ class ChatUI(unittest.IsolatedAsyncioTestCase):
         buttons=q.edit_message_text.await_args.kwargs['reply_markup'].inline_keyboard
         self.assertEqual(buttons[0][0].url,'https://example.org/individual-link')
         self.assertEqual(buttons[1][0].callback_data,'menu:account')
+
+    async def test_expired_callback_ack_does_not_block_account_or_plans(self):
+        from telegram.error import BadRequest
+        for action in ('account','plans'):
+            q=SimpleNamespace(data='menu:'+action,answer=AsyncMock(side_effect=BadRequest('Query is too old')),
+                edit_message_text=AsyncMock(),message=SimpleNamespace(chat=SimpleNamespace(type='private')))
+            result=[] if action=='plans' else {'premium':False,'trial_remaining':5}
+            with patch('bot.access',AsyncMock(return_value=result)):
+                await bot.menu_action(self.update(q),None)
+            self.assertEqual(q.edit_message_text.await_count,2)
+            self.assertNotIn('Carregando',q.edit_message_text.await_args.args[0])

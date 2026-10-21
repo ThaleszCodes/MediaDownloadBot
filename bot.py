@@ -19,6 +19,15 @@ log = logging.getLogger(__name__)
 ACTIVE = set()
 LAST = {}
 SLOTS = asyncio.Semaphore(2)
+VERSION = '2026.10.21-menu-fix'
+
+
+async def answer_callback(query, text=None):
+    try:
+        await query.answer(text)
+    except TelegramError as exc:
+        # Old callback IDs can no longer be acknowledged, but the menu must still open.
+        log.warning('Callback acknowledgement failed: %s', type(exc).__name__)
 
 
 async def show(update, text, keyboard=None):
@@ -73,7 +82,7 @@ async def plans(update, context):
 
 async def subscribe(update, context):
     query = update.callback_query
-    await query.answer('Preparando seu acesso…')
+    await answer_callback(query, 'Preparando seu acesso…')
     if not query.message or query.message.chat.type != 'private':
         return
     plan = query.data.split(':', 1)[1]
@@ -96,17 +105,19 @@ async def subscribe(update, context):
 
 async def menu_action(update, context):
     query = update.callback_query
-    await query.answer()
+    await answer_callback(query)
     if not query.message or query.message.chat.type != 'private':
         return
     action = query.data.split(':', 1)[1]
     if action == 'home':
         await start(update, context)
     elif action == 'account':
+        await show(update, '⏳ <b>Abrindo sua conta…</b>', ui.back())
         await account(update, context)
     elif action == 'help':
         await help_command(update, context)
     elif action == 'plans':
+        await show(update, '⏳ <b>Carregando os planos…</b>', ui.back())
         await plans(update, context)
     elif action == 'download':
         await show(update, ui.DOWNLOAD, ui.back())
@@ -123,6 +134,13 @@ async def setup_commands(app):
 
 async def link(update, context):
     if update.effective_chat.type != 'private':
+        return
+    label = update.message.text.strip().casefold()
+    if label in ('conta', 'minha conta', '👤 minha conta', '👤 conta'):
+        await account(update, context)
+        return
+    if label in ('planos', '💎 planos'):
+        await plans(update, context)
         return
     try:
         aid = album_id(update.message.text)
@@ -222,23 +240,31 @@ async def error_handler(update, context):
             pass
 
 
+def build_application(token, request=None):
+    builder = Application.builder().token(token).concurrent_updates(8).post_init(setup_commands)
+    if request is not None:
+        builder = builder.request(request).get_updates_request(request)
+    app = builder.build()
+    app.add_handler(CommandHandler('start', start))
+    app.add_handler(CommandHandler('help', help_command))
+    app.add_handler(CommandHandler('planos', plans))
+    app.add_handler(CommandHandler(['conta', 'account'], account))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, link))
+    app.add_handler(CallbackQueryHandler(subscribe, pattern=r'^subscribe:(weekly|monthly)$'))
+    app.add_handler(CallbackQueryHandler(menu_action, pattern=r'^menu:(home|account|help|plans|download)$'))
+    app.add_handler(CallbackQueryHandler(choose, pattern=r'^(photo|video|all):[A-Za-z0-9]+$'))
+    app.add_error_handler(error_handler)
+    return app
+
+
 def main():
     load_dotenv()
     token = os.getenv('TELEGRAM_BOT_TOKEN', '').strip()
     if not token:
         raise SystemExit('Preencha TELEGRAM_BOT_TOKEN no arquivo .env antes de iniciar.')
     logging.basicConfig(level=logging.WARNING)
-    app = Application.builder().token(token).concurrent_updates(8).post_init(setup_commands).build()
-    app.add_handler(CommandHandler('start', start))
-    app.add_handler(CommandHandler('help', help_command))
-    app.add_handler(CommandHandler('planos', plans))
-    app.add_handler(CommandHandler('conta', account))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, link))
-    app.add_handler(CallbackQueryHandler(subscribe, pattern=r'^subscribe:(weekly|monthly)$'))
-    app.add_handler(CallbackQueryHandler(menu_action, pattern=r'^menu:(home|account|help|plans|download)$'))
-    app.add_handler(CallbackQueryHandler(choose, pattern=r'^(photo|video|all):[A-Za-z0-9]+$'))
-    app.add_error_handler(error_handler)
-    print('Bot iniciado. Abra o Telegram e envie /start. Ctrl+C para parar.', flush=True)
+    app = build_application(token)
+    print(f'Bot {VERSION} iniciado. Abra /start no Telegram. Ctrl+C para parar.', flush=True)
     app.run_polling(allowed_updates=['message', 'callback_query'], drop_pending_updates=True)
 
 
