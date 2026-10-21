@@ -110,8 +110,65 @@ A melhoria reduz esperas entre arquivos, mas não aumenta a velocidade da sua co
   Para rotação, atualize o segredo do bot e `BOT_ACCESS_SECRET_SHA256` nos secrets da função.
 - `supabase/schema.sql` é snapshot inicial para um banco vazio, não deve ser reaplicado.
 - Os checkouts semanal e mensal estão em `bot_plans`, com vendas DESATIVADAS.
-- Não há webhook Cakto, vínculo de comprador ou checkout no Telegram nesta etapa.
-  A regra de Stars para serviço digital no bot ainda precisa ser resolvida.
+- O receptor Cakto e a lógica de pagamento estão em `supabase/webhook.sql` e
+  `supabase/functions/cakto-webhook`. Cadastro na Cakto e segredo são necessários.
+  O checkout dentro do Telegram continua desativado; a regra de Stars precisa ser resolvida.
 - Assinaturas só são aceitas se existir concessão válida em `bot_subscriptions`;
   nenhuma mensagem ou link do comprador pode liberar Premium.
 - Não iniciar vendas antes de validar cobrança, reembolso, vínculo de conta e limites pagos.
+
+## Webhook Cakto
+
+URL de produção:
+`https://afdelhhqpdgdvsiklogi.supabase.co/functions/v1/cakto-webhook`
+
+Na Cakto, crie um webhook **apenas para o produto MediaDownloadBot** com os eventos:
+`purchase_approved`, `subscription_renewed`, `subscription_late_recovered`, `refund`,
+`chargeback`, `subscription_canceled`, `subscription_paused`, `subscription_resumed`,
+`subscription_late`, `subscription_renewal_refused`, `refund_requested`.
+
+Copie o segredo GERADO PELA CAKTO para Supabase > Edge Functions > Secrets,
+nome `CAKTO_WEBHOOK_SECRET`. Não use o token do bot, não publique o segredo.
+Sem esse secret o endpoint responde 503 e nunca libera acesso.
+HMAC-SHA256 com timestamp de até 5 minutos é validado sobre o corpo original.
+Entregas antigas sem header de assinatura aceitam o `secret` no corpo conforme a documentação.
+Um header inválido nunca pode cair na validação alternativa.
+
+### Associação da compra
+
+O backend externo autenticado usa `bot_create_checkout(telegram_id, plan_code)`
+para gerar uma sessão aleatória de 24h. O link contém `?callback=TOKEN`.
+O ID do Telegram deve vir de uma autenticação verificada, nunca de campo digitado
+num formulário público. Este RPC não é público nem acessível pelo frontend.
+Não há endpoint público de geração de sessões ou novo botão de checkout no bot.
+`bot_plans.sales_enabled` permanece false até concluir a publicação do fluxo de venda.
+
+O webhook associa a compra pelo callback; renovações podem usar a assinatura
+já vinculada. Um callback não pode vincular duas compras iniciais diferentes.
+Compras pelos links crus, sem sessão, ficam `pending_identity` para suporte;
+um e-mail ou número do pedido enviado no chat nunca libera acesso automaticamente.
+Configure `provider_offer_id` e `provider_product_id` em bot_plans quando os IDs
+forem consultados na conta Cakto. Até lá, o webhook assinado aceita apenas os
+checkouts exatos cadastrados, moeda BRL e preço integral configurado. Cupons exigem
+uma política explícita antes de ativar. Eventos de teste da Cakto usam oferta fixa
+e serão ignorados pelo filtro; não use dados de teste para habilitar Premium real.
+
+- A aprovação cria um período por ID de pedido, sem duplicar por retry ou evento de renovação.
+- Reembolso/chargeback revogam aquele pagamento; aprovação tardia não o reativa.
+- Cancelamento e atraso são registrados e preservam períodos já pagos.
+- Mensal usa mês de calendário; semanal usa 7 dias; novas cobranças acumulam a partir do fim do acesso.
+- V1 (objeto) e V2 (array) são aceitos, com limite de 20 pedidos por entrega.
+- Campos pessoais e o secret nunca são persistidos no histórico.
+- Falha de banco responde 503. A Cakto **não retenta automaticamente respostas HTTP
+  de erro**; monitore o histórico e reenvie manualmente após corrigir. A idempotência
+  permite repetir eventos com segurança. `pending_identity` também exige revisão e replay.
+
+Testes adicionais:
+
+```bash
+node --experimental-strip-types --test tests/webhook.test.mjs
+```
+
+`tests/webhook.sql` testa a concessão real no banco com fixtures e rollback,
+incluindo replay, renovação, cancelamento, chargeback fora de ordem, valores inválidos,
+identidade pendente e mês de calendário. Não cria cobranças reais.
