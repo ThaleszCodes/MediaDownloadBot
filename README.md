@@ -199,3 +199,15 @@ precisa da main atual e de SUPABASE_URL e BOT_ACCESS_SECRET válidos no .env.
 Nenhuma compra real foi feita automaticamente. O teste real deve conferir o preço
 no checkout, concluir o pagamento voluntariamente e verificar a chegada do webhook.
 Se o acesso não liberar, consulte bot_payment_events antes de tentar pagar de novo.
+
+## Cupons e taxas do comprador
+
+`supabase/payment_diagnostics.sql` atualiza a função existente para reconciliar
+preço-base, desconto de cupom e acréscimos cobrados do comprador. São aceitos o
+valor líquido do produto ou o total com acréscimos explicitamente informados pela
+Cakto. Taxas de processamento do produtor (`fees`) não são usadas para completar
+um valor divergente. Desconto sem cupom, base incorreta ou diferença sem explicação
+continuam bloqueados. `payment_details` guarda apenas valores normalizados e IDs,
+sem cartão, CPF, e-mail ou segredo do webhook. Eventos antigos sem esses campos
+precisam ser reenviados a partir da compra real na Cakto; nunca sintetize uma
+aprovação para liberar acesso. `tests/coupons.sql` valida os casos com rollback.

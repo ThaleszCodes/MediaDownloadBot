@@ -27,15 +27,30 @@ export async function authentic(raw: string,headers: Headers,secret: string,now=
  catch { return false; }
 }
 
+export function cents(value: unknown): number|null {
+ if(value===null || value===undefined) return null;
+ if(typeof value!=='number' && (typeof value!=='string' || !/^\d+(?:\.\d{1,2})?$/.test(value))) throw new TypeError('invalid money');
+ const n=Number(value);
+ if(!Number.isFinite(n) || n<0 || n>10000000) throw new TypeError('invalid money');
+ const result=Math.round(n*100);
+ if(Math.abs(n*100-result)>0.00001) throw new TypeError('invalid precision');
+ return result;
+}
+
 export function normalize(data: any): Record<string,unknown> {
  if(!data || typeof data!=='object' || Array.isArray(data) || typeof data.id!=='string' || !data.id || data.id.length>255)
   throw new Error('invalid order');
  const url=data.checkoutUrl ? new URL(data.checkoutUrl) : null;
  const amount=data.amount;
  if(amount!==null && amount!==undefined && (typeof amount!=='number' || !Number.isFinite(amount) || amount<0)) throw new Error('invalid amount');
- const cents=typeof amount==='number'? Math.round(amount*100):null;
+ const amountCents=cents(amount);
  const callback=typeof data.callback==='string' && /^[A-Za-z0-9._~-]{1,255}$/.test(data.callback)?data.callback:null;
- return {id:data.id, status:data.status??null, currency:data.currency??null, amount_cents:cents,
+ return {id:data.id, status:data.status??null, currency:data.currency??null, amount_cents:amountCents,
+  base_amount_cents:cents(data.baseAmount),discount_cents:cents(data.discount),
+  charged_fees_cents:cents(data.charged_fees),interest_cents:cents(data.interest),
+  additional_interest_cents:cents(data.additionalInstallmentInterest),
+  offer_price_cents:cents(data.offer?.price),
+  coupon_code:typeof data.couponCode==='string'?data.couponCode.slice(0,255):null,
   checkout_url:url && url.protocol==='https:' && url.hostname==='pay.cakto.com.br' && !url.username && !url.password && !url.port
    ? 'https://pay.cakto.com.br'+url.pathname.replace(/\/$/,''):null,
   offer_id:data.offer?.id??null,product_id:data.product?.id??null,

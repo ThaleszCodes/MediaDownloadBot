@@ -50,3 +50,13 @@ test('database error is not acknowledged as success',async()=>{
  const h=handler(secret,async()=>{throw new Error('database down')});
  assert.equal((await h(signed({event:'purchase_approved',data:order}))).status,503);
 });
+
+test('coupon and buyer fee normalized without treating processing fees as extras',()=>{
+ const data=normalize({...order,amount:4.99,baseAmount:5,discount:'1.00',charged_fees:'0.99',
+  interest:'0.00',additionalInstallmentInterest:'0.00',couponCode:'TEST1',fees:2.49,offer:{id:'offer-1',price:5}});
+ assert.equal(data.amount_cents,499);assert.equal(data.base_amount_cents,500);
+ assert.equal(data.discount_cents,100);assert.equal(data.charged_fees_cents,99);
+ assert.equal(data.coupon_code,'TEST1');assert.ok(!('fees' in data));
+ assert.throws(()=>normalize({...order,discount:'-1.00'}));
+ assert.throws(()=>normalize({...order,charged_fees:'0.999'}));
+});

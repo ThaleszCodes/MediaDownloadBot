@@ -18,6 +18,7 @@ create table public.bot_payment_events (
  provider_subscription_id text,
  checkout_token text,
  status text not null default 'received',
+ payment_details jsonb,
  received_at timestamptz not null default now(),
  processed_at timestamptz,
  primary key(order_id,event)
@@ -47,6 +48,7 @@ language plpgsql security invoker set search_path='' as $$
 declare oid text:=p_data->>'id'; p public.bot_plans; sess public.bot_checkout_sessions;
  uid bigint; subid text:=nullif(p_data->>'subscription_id',''); paid timestamptz;
  from_date timestamptz; to_date timestamptz; saved public.bot_subscriptions;
+ net_cents integer; extras integer; pricing_ok boolean;
  result text; callback text:=p_data->>'callback'; previous text;
 begin
  if oid is null or length(oid)>255 or length(oid)=0 then raise exception 'invalid order'; end if;
@@ -71,6 +73,13 @@ begin
  if p.code is null then return jsonb_build_object('result','ignored_offer'); end if;
  insert into public.bot_payment_events(order_id,event,plan_code,provider_subscription_id,checkout_token)
  values(oid,p_event,p.code,subid,callback) on conflict do nothing;
+ update public.bot_payment_events set payment_details=jsonb_build_object('status',p_data->'status',
+ 'currency',p_data->'currency','amount_cents',p_data->'amount_cents','expected_cents',p.price_cents,
+ 'base_amount_cents',p_data->'base_amount_cents','discount_cents',p_data->'discount_cents',
+ 'charged_fees_cents',p_data->'charged_fees_cents','interest_cents',p_data->'interest_cents',
+ 'additional_interest_cents',p_data->'additional_interest_cents','coupon_code',p_data->'coupon_code',
+ 'paid_at',p_data->'paid_at','offer_id',p_data->'offer_id','product_id',p_data->'product_id')
+ where order_id=oid and event=p_event;
  if p_event in ('refund','chargeback') then
   update public.bot_subscriptions set revoked_at=coalesce(revoked_at,now()) where provider_order_id=oid;
   update public.bot_payment_events set status='revoked',processed_at=now() where order_id=oid and event=p_event;
@@ -89,8 +98,24 @@ begin
   update public.bot_payment_events set status='applied',processed_at=now() where order_id=oid and event=p_event;
   return jsonb_build_object('result','duplicate_order');
  end if;
+ -- Validate the advertised base price, then reconcile only provider-reported
+ -- discount and buyer-paid extras. Never subtract producer processing fees.
+ pricing_ok := false;
+ if p_data->>'base_amount_cents' is null then
+  -- Backward compatibility for old full-price normalized events only.
+  pricing_ok := (p_data->>'amount_cents')::integer = p.price_cents
+                and coalesce((p_data->>'discount_cents')::integer,0)=0;
+ elsif (p_data->>'base_amount_cents')::integer=p.price_cents then
+  net_cents:=p.price_cents-coalesce((p_data->>'discount_cents')::integer,0);
+  extras:=coalesce((p_data->>'charged_fees_cents')::integer,0)
+         +coalesce((p_data->>'interest_cents')::integer,0)
+         +coalesce((p_data->>'additional_interest_cents')::integer,0);
+  pricing_ok:=net_cents>0 and net_cents<=p.price_cents and extras>=0
+   and (coalesce((p_data->>'discount_cents')::integer,0)=0 or nullif(p_data->>'coupon_code','') is not null)
+   and (p_data->>'amount_cents')::integer in (net_cents,net_cents+extras);
+ end if;
  if (p_data->>'status') is distinct from 'paid' or (p_data->>'currency') is distinct from 'BRL'
- or (p_data->>'amount_cents')::integer is distinct from p.price_cents then
+ or pricing_ok is not true then
   update public.bot_payment_events set status='payment_mismatch' where order_id=oid and event=p_event;
   return jsonb_build_object('result','payment_mismatch');
  end if;
