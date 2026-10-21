@@ -2,7 +2,8 @@
 
 Envie um link público `https://www.erome.com/a/IDDOALBUM` no privado do bot.
 Ele mostra **Baixar fotos**, **Baixar vídeos** e **Baixar Todos** e envia cada mídia no chat.
-Qualquer pessoa pode usar. Não precisa de IA, banco de dados, webhook ou FFmpeg.
+Qualquer pessoa pode iniciar. O saldo grátis e os vencimentos agora ficam no Supabase.
+Não precisa de IA ou FFmpeg.
 Use somente conteúdo não explícito e autorizado. Não há classificação visual automática:
 o bot não garante bloquear conteúdo explícito. Não contorna login ou bloqueios.
 
@@ -94,3 +95,23 @@ no total. Lotes são limitados a 64 MiB de mídia para conter memória, além do
 do Python e HTTP. Reserve espaço temporário no celular (até cerca de 300 MiB por pedido).
 O Telegram pode solicitar uma pausa com RetryAfter: o bot respeita esse tempo.
 A melhoria reduz esperas entre arquivos, mas não aumenta a velocidade da sua conexão.
+
+## Controle de acesso
+
+- Cada ID do Telegram recebe 5 mídias grátis uma vez. `/conta` consulta saldo e vencimento.
+- Antes de baixar, o backend reserva até o saldo disponível e corta o álbum nesse limite.
+- Envios confirmados são contabilizados por lote, com idempotência no banco. Falhas
+  definitivas liberam saldo quando o pedido termina; timeout, cancelamento ou crash
+  mantêm a reserva para revisão, pois o Telegram pode ter recebido a mídia.
+- Reservas abandonadas exigem reconciliação de suporte em `bot_download_jobs`.
+- Tabelas têm RLS e acesso negado a anon/authenticated. Só backend privilegiado acessa.
+- Backend usa `SUPABASE_URL` e `BOT_ACCESS_SECRET` (apenas Railway ou .env local).
+- A Edge Function autentica esse segredo por SHA-256; o código contém só o hash.
+  Para rotação, atualize o segredo do bot e `BOT_ACCESS_SECRET_SHA256` nos secrets da função.
+- `supabase/schema.sql` é snapshot inicial para um banco vazio, não deve ser reaplicado.
+- Os checkouts semanal e mensal estão em `bot_plans`, com vendas DESATIVADAS.
+- Não há webhook Cakto, vínculo de comprador ou checkout no Telegram nesta etapa.
+  A regra de Stars para serviço digital no bot ainda precisa ser resolvida.
+- Assinaturas só são aceitas se existir concessão válida em `bot_subscriptions`;
+  nenhuma mensagem ou link do comprador pode liberar Premium.
+- Não iniciar vendas antes de validar cobrança, reembolso, vínculo de conta e limites pagos.

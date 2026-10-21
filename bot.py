@@ -4,6 +4,7 @@ import logging
 import os
 import tempfile
 import time
+import uuid
 from dotenv import load_dotenv
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import TelegramError
@@ -11,6 +12,7 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Mess
 import httpx
 from media import album_id, parse_album, fetch_to, client_for
 from transfers import transfer_items
+from access import access, AccessUnavailable
 
 log = logging.getLogger(__name__)
 ACTIVE = set()
@@ -24,7 +26,23 @@ async def start(update, context):
         'Vou mostrar as opções: fotos, vídeos ou todos.\n'
         'Use somente mídias não explícitas que você tem autorização para baixar.\n'
         'Limites: 50 mídias, 49 MiB por arquivo e 10 minutos por pedido.\n'
+        'Você tem 5 mídias gratuitas por conta. Consulte /conta.\n'
         'Não faço classificação automática do conteúdo.')
+    await account(update, context)
+
+
+async def account(update, context):
+    if update.effective_chat.type != 'private':
+        return
+    try:
+        state = await access(update.effective_user.id)
+        if state['premium']:
+            text = f"Premium ativo. Vencimento: {state['expires_at']}"
+        else:
+            text = f"Teste grátis: {state['trial_remaining']} mídias restantes.\nEnvios confirmados descontam 1 por foto ou vídeo."
+        await update.effective_message.reply_text(text)
+    except AccessUnavailable as exc:
+        await update.effective_message.reply_text(str(exc))
 
 
 async def link(update, context):
@@ -50,7 +68,17 @@ async def download(query, kind, aid):
         if not items:
             await status.edit_text('Este álbum não tem mídias desse tipo.')
             return
+        job = str(uuid.uuid4())
+        reservation = await access(query.from_user.id, 'reserve', job, len(items))
+        quota = reservation['quota']
+        if quota == 0:
+            await status.edit_text('Você já tem um pedido reservado. Consulte o suporte.' if reservation.get('busy')
+                                   else 'Suas 5 mídias gratuitas acabaram. As assinaturas ainda estão em preparação.')
+            return
+        items = items[:quota]
+
         async def progress(sent, failed):
+            await access(query.from_user.id, 'progress', job, sent)
             try:
                 await status.edit_text(f'Enviando em álbuns · {sent}/{len(items)} enviados · {failed} falhas')
             except TelegramError:
@@ -60,6 +88,9 @@ async def download(query, kind, aid):
         with tempfile.TemporaryDirectory(prefix='media-bot-') as tmp:
             sent, failed = await transfer_items(
                 client, items, tmp, query.get_bot(), query.message.chat_id, progress)
+        # Only release reservations after a fully confirmed transfer. In a crash or
+        # ambiguous Telegram timeout, keep the reservation for support reconciliation.
+        await access(query.from_user.id, 'finish', job, sent)
     await status.edit_text(f'Concluído: {sent} enviados e {failed} falhas.\n'
                            'Falhas podem ser arquivos grandes, indisponíveis ou recusados pelo Telegram.')
 
@@ -93,8 +124,8 @@ async def choose(update, context):
             await asyncio.wait_for(download(query, kind, aid), timeout=600)
     except asyncio.TimeoutError:
         await query.message.reply_text('Tempo limite atingido. As mídias já enviadas permanecem no chat.')
-    except (ValueError, httpx.HTTPError) as exc:
-        message = str(exc) if isinstance(exc, ValueError) else 'Não consegui acessar o álbum. Tente novamente mais tarde.'
+    except (ValueError, httpx.HTTPError, AccessUnavailable) as exc:
+        message = str(exc) if isinstance(exc, (ValueError, AccessUnavailable)) else 'Não consegui acessar o álbum. Tente novamente mais tarde.'
         await query.message.reply_text(message)
     except TelegramError:
         log.warning('Falha de comunicação com Telegram (detalhes omitidos).')
@@ -120,6 +151,7 @@ def main():
     logging.basicConfig(level=logging.WARNING)
     app = Application.builder().token(token).concurrent_updates(8).build()
     app.add_handler(CommandHandler(['start', 'help'], start))
+    app.add_handler(CommandHandler('conta', account))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, link))
     app.add_handler(CallbackQueryHandler(choose, pattern=r'^(photo|video|all):[A-Za-z0-9]+$'))
     app.add_error_handler(error_handler)

@@ -84,7 +84,8 @@ class Pipeline(unittest.IsolatedAsyncioTestCase):
     async def test_timeout_does_not_duplicate_album(self):
         self.bot.send_media_group.side_effect = TimedOut()
         with patch.object(t, 'fetch_to', self.fake_fetch):
-            self.assertEqual(await t.transfer_items(None, self.items(3), self.tmp.name, self.bot, 1, self.progress), (0, 3))
+            with self.assertRaises(TimedOut):
+                await t.transfer_items(None, self.items(3), self.tmp.name, self.bot, 1, self.progress)
         self.bot.send_photo.assert_not_awaited()
         self.bot.send_video.assert_not_awaited()
         self.assertEqual(list(Path(self.tmp.name).iterdir()), [])

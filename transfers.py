@@ -7,7 +7,7 @@ from pathlib import Path
 
 import httpx
 from telegram import InputMediaPhoto, InputMediaVideo
-from telegram.error import BadRequest, RetryAfter, TelegramError
+from telegram.error import BadRequest, RetryAfter, TelegramError, NetworkError
 
 from media import fetch_to, MAX_FILE
 
@@ -102,6 +102,8 @@ async def send_batch(bot, chat_id, batch):
                 return len(batch), 0
             except BadRequest:
                 pass
+            except NetworkError:
+                raise  # Keep the reservation: delivery outcome is unknown.
             except TelegramError:
                 # A timeout may mean Telegram received the whole album: do not duplicate it.
                 return 0, len(batch)
@@ -110,6 +112,10 @@ async def send_batch(bot, chat_id, batch):
             try:
                 await single(kind, path)
                 sent += 1
+            except BadRequest:
+                failed += 1
+            except NetworkError:
+                raise
             except TelegramError:
                 failed += 1
         return sent, failed
