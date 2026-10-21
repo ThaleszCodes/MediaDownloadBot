@@ -92,3 +92,15 @@ class ChatUI(unittest.IsolatedAsyncioTestCase):
         text=update.effective_message.reply_text.await_args.args[0]
         self.assertIn('Premium está ativo',text)
         self.assertIn('28/10/2026 às 12h39',text)
+
+    async def test_error_log_preserves_cause_without_leaking_token_or_urls(self):
+        from telegram.error import BadRequest
+        import os
+        token='123456:ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+        with patch.dict(os.environ,{'TELEGRAM_BOT_TOKEN':token,'BOT_ACCESS_SECRET':'private-secret'}):
+            result=bot.safe_error(BadRequest('File too large '+token+' private-secret https://example.org/private'))
+        self.assertIn('BadRequest',result)
+        self.assertIn('File too large',result)
+        self.assertNotIn(token,result)
+        self.assertNotIn('private-secret',result)
+        self.assertNotIn('https://',result)

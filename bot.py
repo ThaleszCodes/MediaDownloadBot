@@ -1,6 +1,7 @@
 """Telegram bot for authorized, non-explicit public media. Run: python bot.py."""
 import asyncio
 import logging
+import re
 import os
 import tempfile
 import time
@@ -19,7 +20,18 @@ log = logging.getLogger(__name__)
 ACTIVE = set()
 LAST = {}
 SLOTS = asyncio.Semaphore(2)
-VERSION = '2026.10.21-menu-fix'
+VERSION = '2026.10.21-telegram-diagnostics'
+
+
+def safe_error(error):
+    detail = str(error)
+    for name in ('TELEGRAM_BOT_TOKEN', 'BOT_ACCESS_SECRET'):
+        secret = os.getenv(name, '')
+        if secret:
+            detail = detail.replace(secret, '[segredo oculto]')
+    detail = re.sub(r'https?://[^\s]+', '[URL oculta]', detail)
+    detail = re.sub(r'\b\d{5,}:[A-Za-z0-9_-]{20,}', '[token oculto]', detail)
+    return f'{type(error).__name__}: {detail[:300]}'
 
 
 async def answer_callback(query, text=None):
@@ -27,7 +39,7 @@ async def answer_callback(query, text=None):
         await query.answer(text)
     except TelegramError as exc:
         # Old callback IDs can no longer be acknowledged, but the menu must still open.
-        log.warning('Callback acknowledgement failed: %s', type(exc).__name__)
+        log.warning('Confirmação de botão: %s', safe_error(exc))
 
 
 async def show(update, text, keyboard=None):
@@ -220,8 +232,8 @@ async def choose(update, context):
     except (ValueError, httpx.HTTPError, AccessUnavailable) as exc:
         message = ('⏳ Não consegui consultar seu acesso. Tente novamente em instantes.' if isinstance(exc, AccessUnavailable) else '⚠️ Não consegui concluir este álbum. Confira se ele é público e está disponível, ou tente outro link. Se o envio já tinha começado, seu saldo pode precisar de revisão.')
         await query.message.reply_text(message)
-    except TelegramError:
-        log.warning('Falha de comunicação com Telegram (detalhes omitidos).')
+    except TelegramError as exc:
+        log.warning('Falha no pedido: %s', safe_error(exc))
         try:
             await query.message.reply_text('📡 A conexão com o Telegram foi interrompida. Confira as mídias recebidas; para evitar duplicação, não reenviei os arquivos automaticamente.', reply_markup=ui.again())
         except TelegramError:
@@ -232,7 +244,7 @@ async def choose(update, context):
 
 async def error_handler(update, context):
     # Never log raw errors/URLs: they can contain the bot token or album links.
-    log.error('Erro não tratado: %s', type(context.error).__name__)
+    log.error('Erro não tratado: %s', safe_error(context.error))
     if update and update.effective_message:
         try:
             await update.effective_message.reply_text('⚠️ Algo não saiu como esperado. Tente novamente em instantes ou abra o menu com /start.')
