@@ -49,7 +49,7 @@ async def account(update, context):
     if update.effective_chat.type != 'private':
         return
     try:
-        state = await access(update.effective_user.id)
+        state = await access(update.effective_user.id, 'account')
         text = ui.account_text(state)
     except AccessUnavailable:
         text = '⏳ <b>Seu saldo está indisponível agora</b>\n\nTente novamente em instantes. Seu saldo continua salvo.'
@@ -62,8 +62,36 @@ async def help_command(update, context):
 
 
 async def plans(update, context):
-    if update.effective_chat.type == 'private':
-        await show(update, ui.PLANS)
+    if update.effective_chat.type != 'private':
+        return
+    try:
+        offers = await access(update.effective_user.id, 'plans')
+        await show(update, ui.plans_text(offers), ui.plans_keyboard(offers))
+    except AccessUnavailable:
+        await show(update, '⏳ <b>Não consegui carregar os planos</b>\n\nTente novamente em instantes.')
+
+
+async def subscribe(update, context):
+    query = update.callback_query
+    await query.answer('Preparando seu acesso…')
+    if not query.message or query.message.chat.type != 'private':
+        return
+    plan = query.data.split(':', 1)[1]
+    try:
+        result = await access(query.from_user.id, 'checkout', plan=plan)
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton('🌐 Continuar no site', url=result['checkout_url'])],
+            [InlineKeyboardButton('🔄 Verificar pagamento', callback_data='menu:account')],
+            [InlineKeyboardButton('⬅️ Voltar aos planos', callback_data='menu:plans')],
+        ])
+        await show(update, '🔐 <b>Seu link individual está pronto</b>\n\n'
+                   'Continue no site da Cakto para conferir o plano e efetuar o pagamento.\n'
+                   'O acesso será vinculado a <b>esta conta do Telegram</b>; não compartilhe o link.\n\n'
+                   'Após o pagamento, toque em <b>Verificar pagamento</b>. '
+                   'A liberação depende da confirmação enviada pela Cakto.', keyboard)
+    except AccessUnavailable:
+        await show(update, '⏳ <b>Não consegui preparar a assinatura</b>\n\n'
+                   'O plano pode estar temporariamente indisponível. Tente novamente em instantes.')
 
 
 async def menu_action(update, context):
@@ -206,6 +234,7 @@ def main():
     app.add_handler(CommandHandler('planos', plans))
     app.add_handler(CommandHandler('conta', account))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, link))
+    app.add_handler(CallbackQueryHandler(subscribe, pattern=r'^subscribe:(weekly|monthly)$'))
     app.add_handler(CallbackQueryHandler(menu_action, pattern=r'^menu:(home|account|help|plans|download)$'))
     app.add_handler(CallbackQueryHandler(choose, pattern=r'^(photo|video|all):[A-Za-z0-9]+$'))
     app.add_error_handler(error_handler)

@@ -109,7 +109,7 @@ A melhoria reduz esperas entre arquivos, mas não aumenta a velocidade da sua co
 - A Edge Function autentica esse segredo por SHA-256; o código contém só o hash.
   Para rotação, atualize o segredo do bot e `BOT_ACCESS_SECRET_SHA256` nos secrets da função.
 - `supabase/schema.sql` é snapshot inicial para um banco vazio, não deve ser reaplicado.
-- Os checkouts semanal e mensal estão em `bot_plans`, com vendas DESATIVADAS.
+- Os checkouts semanal e mensal estão em `bot_plans`, com disponibilidade consultada em tempo real.
 - O receptor Cakto e a lógica de pagamento estão em `supabase/webhook.sql` e
   `supabase/functions/cakto-webhook`. Cadastro na Cakto e segredo são necessários.
   O checkout dentro do Telegram continua desativado; a regra de Stars precisa ser resolvida.
@@ -141,7 +141,7 @@ para gerar uma sessão aleatória de 24h. O link contém `?callback=TOKEN`.
 O ID do Telegram deve vir de uma autenticação verificada, nunca de campo digitado
 num formulário público. Este RPC não é público nem acessível pelo frontend.
 Não há endpoint público de geração de sessões ou novo botão de checkout no bot.
-`bot_plans.sales_enabled` permanece false até concluir a publicação do fluxo de venda.
+`bot_plans.sales_enabled` controla a disponibilidade de cada plano; foi habilitado para o teste solicitado.
 
 O webhook associa a compra pelo callback; renovações podem usar a assinatura
 já vinculada. Um callback não pode vincular duas compras iniciais diferentes.
@@ -179,3 +179,23 @@ O bot usa mensagens HTML e botões inline para baixar, consultar a conta, ver pl
 (em breve) e abrir ajuda. `/start`, `/conta`, `/planos` e `/help` ficam no menu de
 comandos. Nomes de usuários são escapados antes da formatação. Datas de vencimento
 são mostradas no fuso de Brasília. Esta atualização visual não ativa vendas.
+
+## Minha conta e assinatura externa
+
+`supabase/account.sql` acrescenta consultas privadas com saldo usado, disponível,
+reservado, total enviado, plano e vencimento. Os botões da tela de planos são
+gerados a partir do banco, respeitando `sales_enabled`.
+
+O botão Assinar solicita uma sessão individual ao backend e fornece um link
+para `subscription-checkout`. Esse endpoint valida a sessão e redireciona ao
+site externo da Cakto com `callback` opaco, sem confiar em ID de usuário digitado.
+O botão Verificar pagamento consulta novamente o banco; nunca concede acesso por si só.
+Não há coleta de cartão, Pix ou confirmação de pagamento no Telegram. Isso não
+constitui uma garantia de conformidade: as regras do Telegram exigem Stars para
+vendas digitais dentro do app, inclusive quando há portais externos.
+
+As funções de acesso e redirecionamento já estão publicadas no Supabase. O Termux
+precisa da main atual e de SUPABASE_URL e BOT_ACCESS_SECRET válidos no .env.
+Nenhuma compra real foi feita automaticamente. O teste real deve conferir o preço
+no checkout, concluir o pagamento voluntariamente e verificar a chegada do webhook.
+Se o acesso não liberar, consulte bot_payment_events antes de tentar pagar de novo.

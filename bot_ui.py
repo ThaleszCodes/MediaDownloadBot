@@ -25,24 +25,24 @@ def again():
 
 
 def account_text(state):
+    identity = f"👤 <b>Conta Telegram:</b> <code>{state.get('telegram_id', '—')}</code>\n"
+    delivered = f"📦 <b>Total enviado:</b> {state.get('total_delivered', 0)} mídia(s)\n"
     if state['premium']:
         try:
             date = datetime.fromisoformat(state['expires_at'].replace('Z', '+00:00'))
             expiry = date.astimezone(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m/%Y às %Hh%M')
         except (ValueError, TypeError, AttributeError):
             expiry = 'Consulte novamente em instantes'
-        return ('💎 <b>Seu Premium está ativo!</b>\n\n'
-                f'📅 <b>Válido até:</b> {expiry}\n'
-                '<i>Horário de Brasília</i>\n\nEnvie um álbum para começar. 📥')
+        return ('💎 <b>Seu Premium está ativo!</b>\n\n' + identity +
+                f"🗓 <b>Plano:</b> {escape(state.get('plan_name') or 'Premium')}\n" +
+                f'📅 <b>Válido até:</b> {expiry}\n<i>Horário de Brasília</i>\n\n' + delivered)
     remaining = state['trial_remaining']
-    if not remaining:
-        return ('🎁 <b>Você usou seu teste grátis</b>\n\n'
-                'Seu saldo gratuito chegou a <b>0 de 5 mídias</b>.\n'
-                'Confira a seção <b>Planos</b> para acompanhar a disponibilidade do Premium.')
-    return (f'🎁 <b>Seu teste grátis</b>\n\n'
-            f'📸 <b>{remaining} de 5 mídias disponíveis</b>\n\n'
-            'Cada foto ou vídeo enviado com sucesso usa 1 mídia do teste.\n'
-            'O teste é único por conta do Telegram e não reinicia ao usar /start.')
+    reserved = state.get('trial_reserved', 0)
+    detail = f"🎁 <b>Grátis disponíveis:</b> {remaining} de 5\n✅ <b>Grátis utilizados:</b> {state.get('trial_used', 5-remaining)}\n"
+    if reserved:
+        detail += f'⏳ <b>Reservados em pedidos:</b> {reserved}\n'
+    return ('👤 <b>Minha conta</b>\n\n' + identity + '💎 <b>Assinatura:</b> sem Premium ativo\n\n' +
+            detail + delivered + '\n🔄 Se acabou de pagar, consulte novamente após a confirmação da Cakto.')
 
 
 def welcome(name, state):
@@ -102,3 +102,29 @@ def complete(sent, failed):
         text += (f'\n⚠️ <b>{failed} mídia(s) não enviada(s)</b>: podem estar indisponíveis, '
                  'acima do limite ou em formato incompatível.')
     return text + '\n\nQuer baixar mais? Envie outro link. 🔗'
+
+
+def money(cents):
+    return f"R${cents // 100},{cents % 100:02d}"
+
+
+def plans_text(offers):
+    lines = ['💎 <b>Planos Premium</b>', '']
+    for offer in offers:
+        period = 'por semana' if offer['period_days'] == 7 else 'por mês'
+        availability = '' if offer['sales_enabled'] else ' · indisponível no momento'
+        lines.append(f"🗓 <b>{escape(offer['name'])}</b> — {money(offer['price_cents'])} {period}{availability}")
+    lines += ['', '📥 Fotos e vídeos direto na conversa.',
+              '📦 Até 50 mídias por pedido e 49 MiB por arquivo.',
+              '⏱ Um pedido por vez; intervalo de 30 segundos entre pedidos.',
+              '', 'A compra é concluída no site externo. Confira as condições de renovação no checkout.',
+              'O acesso é liberado após a confirmação do pagamento.']
+    return '\n'.join(lines)
+
+
+def plans_keyboard(offers):
+    rows = [[Button(f"💎 Assinar {o['name']} · {money(o['price_cents'])}", callback_data='subscribe:'+o['code'])]
+            for o in offers if o['sales_enabled']]
+    rows += [[Button('🔄 Verificar meu acesso',callback_data='menu:account')],
+             [Button('🏠 Menu inicial',callback_data='menu:home')]]
+    return InlineKeyboardMarkup(rows)

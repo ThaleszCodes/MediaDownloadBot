@@ -42,8 +42,31 @@ class ChatUI(unittest.IsolatedAsyncioTestCase):
     async def test_every_menu_button_answers_and_renders(self):
         for action in ['home','account','download','help','plans']:
             q=SimpleNamespace(data='menu:'+action,answer=AsyncMock(),edit_message_text=AsyncMock(),message=SimpleNamespace(chat=SimpleNamespace(type='private')))
-            with patch('bot.access',AsyncMock(return_value={'premium':False,'trial_remaining':0})):
+            with patch('bot.access',AsyncMock(side_effect=lambda user, action='status': [] if action=='plans' else {'premium':False,'trial_remaining':0})):
                 await bot.menu_action(self.update(q),None)
             q.answer.assert_awaited_once()
             q.edit_message_text.assert_awaited_once()
         self.assertNotIn('https://pay.',ui.PLANS)
+
+    async def test_plans_loaded_from_database_generate_subscription_buttons(self):
+        offers=[{'code':'weekly','name':'Semanal','price_cents':500,'period_days':7,'sales_enabled':True},
+                {'code':'monthly','name':'Mensal','price_cents':1590,'period_days':None,'sales_enabled':False}]
+        update=self.update()
+        with patch('bot.access',AsyncMock(return_value=offers)) as api:
+            await bot.plans(update,None)
+        api.assert_awaited_once_with(42,'plans')
+        call=update.effective_message.reply_text.await_args
+        self.assertIn('R$5,00',call.args[0])
+        buttons=[b.callback_data for row in call.kwargs['reply_markup'].inline_keyboard for b in row]
+        self.assertIn('subscribe:weekly',buttons)
+        self.assertNotIn('subscribe:monthly',buttons)
+
+    async def test_subscription_is_bound_to_callback_user(self):
+        q=SimpleNamespace(data='subscribe:weekly',from_user=SimpleNamespace(id=42),answer=AsyncMock(),edit_message_text=AsyncMock(),message=SimpleNamespace(chat=SimpleNamespace(type='private')))
+        update=self.update(q)
+        with patch('bot.access',AsyncMock(return_value={'checkout_url':'https://example.org/individual-link'})) as api:
+            await bot.subscribe(update,None)
+        api.assert_awaited_once_with(42,'checkout',plan='weekly')
+        buttons=q.edit_message_text.await_args.kwargs['reply_markup'].inline_keyboard
+        self.assertEqual(buttons[0][0].url,'https://example.org/individual-link')
+        self.assertEqual(buttons[1][0].callback_data,'menu:account')
