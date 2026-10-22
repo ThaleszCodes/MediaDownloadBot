@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 ACTIVE = set()
 LAST = {}
 SLOTS = asyncio.Semaphore(2)
-VERSION = '2026.10.21-launch'
+VERSION = '2026.10.22-abandon'
 
 
 def safe_error(error):
@@ -89,12 +89,13 @@ async def start(update, context):
 async def account(update, context):
     if update.effective_chat.type != 'private':
         return
+    state = None
     try:
         state = await access(update.effective_user.id, 'account')
         text = ui.account_text(state)
     except AccessUnavailable:
         text = '⏳ <b>Sua conta está indisponível agora</b>\n\nTente novamente em instantes. Seus dados continuam salvos.'
-    await show(update, text)
+    await show(update, text, ui.abandon_keyboard() if state and state.get('trial_reserved', 0) else None)
 
 
 async def help_command(update, context):
@@ -156,6 +157,35 @@ async def menu_action(update, context):
         await show(update, ui.DOWNLOAD, ui.back())
 
 
+async def abandon(update, context):
+    query = update.callback_query
+    await answer_callback(query)
+    if not query.message or query.message.chat.type != 'private':
+        return
+    if query.from_user.id in ACTIVE:
+        await show(update, '⏳ Seu pedido ainda está em andamento. Aguarde a conclusão antes de abandoná-lo.', ui.back())
+        return
+    if query.data == 'abandon:ask':
+        await show(update, '❌ <b>Abandonar as mídias reservadas?</b>\n\n'
+                   'Isso encerra pedidos interrompidos. As mídias já recebidas continuam no chat.\n'
+                   '🎁 No teste grátis, as mídias reservadas não serão devolvidas ao limite gratuito.\n'
+                   '💎 Sua assinatura permanece ativa.\n\n'
+                   'Pedidos recentes só podem ser abandonados após 11 minutos do início do processamento.',
+                   ui.abandon_confirmation())
+        return
+    try:
+        result = await access(query.from_user.id, 'abandon')
+    except AccessUnavailable:
+        await show(update, '⏳ Não consegui encerrar o pedido agora. Tente novamente em instantes.', ui.abandon_keyboard())
+        return
+    if result.get('busy'):
+        await show(update, '⏳ O pedido ainda está no prazo de processamento. Aguarde completar 11 minutos do início e tente novamente.', ui.abandon_keyboard())
+    elif result.get('closed', 0):
+        await show(update, '✅ <b>Pedido reservado abandonado.</b>\n\nVocê já pode enviar o link de um novo álbum.', ui.again())
+    else:
+        await show(update, '✅ Não há pedidos reservados para abandonar. Você pode enviar outro álbum.', ui.again())
+
+
 async def setup_commands(app):
     await app.bot.set_my_commands([
         BotCommand('start', '🏠 Abrir menu inicial'),
@@ -199,8 +229,12 @@ async def download(query, kind, aid):
         reservation = await access(query.from_user.id, 'reserve', job, len(items))
         quota = reservation['quota']
         if quota == 0:
-            await status.edit_text('⏳ Seu pedido anterior ainda tem mídias reservadas. Se ele foi interrompido, fale com o suporte para revisar o pedido.' if reservation.get('busy')
-                                   else '🎁 Você usou suas 5 mídias grátis! Assine em /planos para continuar com downloads ilimitados durante o plano.')
+            if reservation.get('busy'):
+                await status.edit_text('⏳ Há um pedido reservado. Se ele foi interrompido, você pode abandoná-lo abaixo.',
+                                       reply_markup=ui.abandon_keyboard())
+            else:
+                await status.edit_text('🎁 Você usou suas 5 mídias grátis! Assine em /planos para continuar com downloads ilimitados durante o plano.',
+                                       reply_markup=ui.back())
             return
         items = items[:quota]
 
@@ -284,6 +318,7 @@ def build_application(token, request=None):
     app.add_handler(CommandHandler('planos', plans))
     app.add_handler(CommandHandler(['conta', 'account'], account))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, link))
+    app.add_handler(CallbackQueryHandler(abandon, pattern=r'^abandon:(ask|confirm)$'))
     app.add_handler(CallbackQueryHandler(subscribe, pattern=r'^subscribe:(weekly|monthly)$'))
     app.add_handler(CallbackQueryHandler(menu_action, pattern=r'^menu:(home|account|help|plans|download)$'))
     app.add_handler(CallbackQueryHandler(choose, pattern=r'^(photo|video|all):[A-Za-z0-9]+$'))

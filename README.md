@@ -243,3 +243,17 @@ Validação local: 32 testes Python com Telegram e mídia simulados, incluindo f
 completo de download de assinante sem teste grátis, streaming, ordenação, falhas,
 limites de concorrência e cancelamento. O teste real na hospedagem deve conferir
 memória, armazenamento temporário e tempo de transferência com um álbum pequeno.
+
+
+## Abandonar pedidos interrompidos
+
+Aplicar `supabase/abandon.sql` e atualizar a Edge Function `bot-access`. Quando uma
+reserva anterior bloqueia um pedido, o botão “❌ Abandonar Mídias Reservadas?” abre
+uma confirmação. Apenas pedidos do usuário atual com pelo menos 11 minutos podem
+ser encerrados; o worker tem timeout de 10 minutos. Pedidos locais ativos também
+bloqueiam a ação. O encerramento é atômico e idempotente, usa o mesmo lock do
+controle de acesso e mantém o total confirmado enviado. No teste gratuito, toda
+reserva restante é contabilizada como utilizada, explicitamente na confirmação,
+para impedir que envios sem confirmação permitam reutilizar o teste. Não altera
+assinaturas. `tests/abandon.sql` testa propriedade, prazo, contabilização,
+idempotência e permissões em transação revertida.

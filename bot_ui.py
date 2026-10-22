@@ -140,3 +140,17 @@ def plans_keyboard(offers):
     rows += [[support_button()], [Button('🔄 Verificar meu acesso',callback_data='menu:account')],
              [Button('🏠 Menu inicial',callback_data='menu:home')]]
     return InlineKeyboardMarkup(rows)
+
+
+def abandon_keyboard():
+    return InlineKeyboardMarkup([
+        [Button('❌ Abandonar Mídias Reservadas?', callback_data='abandon:ask')],
+        [support_button()],
+    ])
+
+
+def abandon_confirmation():
+    return InlineKeyboardMarkup([
+        [Button('✅ Sim, abandonar', callback_data='abandon:confirm')],
+        [Button('⬅️ Voltar à conta', callback_data='menu:account')],
+    ])

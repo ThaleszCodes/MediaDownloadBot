@@ -128,3 +128,29 @@ class ChatUI(unittest.IsolatedAsyncioTestCase):
         calls=fake.send_chat_action.await_count
         await asyncio.sleep(0)
         self.assertEqual(fake.send_chat_action.await_count,calls)
+
+    async def test_abandon_requires_confirmation_and_uses_current_user(self):
+        q=SimpleNamespace(data='abandon:ask',from_user=SimpleNamespace(id=42),answer=AsyncMock(),
+            edit_message_text=AsyncMock(),message=SimpleNamespace(chat=SimpleNamespace(type='private')))
+        with patch('bot.access',AsyncMock(return_value={'closed':1})) as api:
+            await bot.abandon(self.update(q),None)
+            api.assert_not_awaited()
+            self.assertIn('não serão devolvidas',q.edit_message_text.await_args.args[0])
+            q.data='abandon:confirm'
+            await bot.abandon(self.update(q),None)
+            api.assert_awaited_once_with(42,'abandon')
+            self.assertIn('abandonado',q.edit_message_text.await_args.args[0])
+
+    async def test_abandon_never_closes_active_or_recent_requests(self):
+        q=SimpleNamespace(data='abandon:confirm',from_user=SimpleNamespace(id=42),answer=AsyncMock(),
+            edit_message_text=AsyncMock(),message=SimpleNamespace(chat=SimpleNamespace(type='private')))
+        bot.ACTIVE.add(42)
+        try:
+            with patch('bot.access',AsyncMock()) as api:
+                await bot.abandon(self.update(q),None)
+                api.assert_not_awaited()
+        finally:
+            bot.ACTIVE.discard(42)
+        with patch('bot.access',AsyncMock(return_value={'busy':True,'closed':0})):
+            await bot.abandon(self.update(q),None)
+        self.assertIn('11 minutos',q.edit_message_text.await_args.args[0])
