@@ -145,7 +145,6 @@ def plans_keyboard(offers):
 def abandon_keyboard():
     return InlineKeyboardMarkup([
         [Button('❌ Abandonar Mídias Reservadas?', callback_data='abandon:ask')],
-        [support_button()],
     ])
 
 

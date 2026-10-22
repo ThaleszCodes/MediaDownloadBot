@@ -141,7 +141,7 @@ class ChatUI(unittest.IsolatedAsyncioTestCase):
             api.assert_awaited_once_with(42,'abandon')
             self.assertIn('abandonado',q.edit_message_text.await_args.args[0])
 
-    async def test_abandon_never_closes_active_or_recent_requests(self):
+    async def test_abandon_never_closes_active_requests(self):
         q=SimpleNamespace(data='abandon:confirm',from_user=SimpleNamespace(id=42),answer=AsyncMock(),
             edit_message_text=AsyncMock(),message=SimpleNamespace(chat=SimpleNamespace(type='private')))
         bot.ACTIVE.add(42)
@@ -153,4 +153,4 @@ class ChatUI(unittest.IsolatedAsyncioTestCase):
             bot.ACTIVE.discard(42)
         with patch('bot.access',AsyncMock(return_value={'busy':True,'closed':0})):
             await bot.abandon(self.update(q),None)
-        self.assertIn('11 minutos',q.edit_message_text.await_args.args[0])
+        self.assertIn('em andamento',q.edit_message_text.await_args.args[0])

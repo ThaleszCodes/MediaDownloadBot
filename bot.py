@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 ACTIVE = set()
 LAST = {}
 SLOTS = asyncio.Semaphore(2)
-VERSION = '2026.10.22-abandon'
+VERSION = '2026.10.22-abandon-now'
 
 
 def safe_error(error):
@@ -169,8 +169,7 @@ async def abandon(update, context):
         await show(update, '❌ <b>Abandonar as mídias reservadas?</b>\n\n'
                    'Isso encerra pedidos interrompidos. As mídias já recebidas continuam no chat.\n'
                    '🎁 No teste grátis, as mídias reservadas não serão devolvidas ao limite gratuito.\n'
-                   '💎 Sua assinatura permanece ativa.\n\n'
-                   'Pedidos recentes só podem ser abandonados após 11 minutos do início do processamento.',
+                   '💎 Sua assinatura permanece ativa.',
                    ui.abandon_confirmation())
         return
     try:
@@ -179,7 +178,7 @@ async def abandon(update, context):
         await show(update, '⏳ Não consegui encerrar o pedido agora. Tente novamente em instantes.', ui.abandon_keyboard())
         return
     if result.get('busy'):
-        await show(update, '⏳ O pedido ainda está no prazo de processamento. Aguarde completar 11 minutos do início e tente novamente.', ui.abandon_keyboard())
+        await show(update, '⏳ Seu pedido ainda está em andamento. Aguarde a conclusão antes de abandoná-lo.', ui.abandon_keyboard())
     elif result.get('closed', 0):
         await show(update, '✅ <b>Pedido reservado abandonado.</b>\n\nVocê já pode enviar o link de um novo álbum.', ui.again())
     else:

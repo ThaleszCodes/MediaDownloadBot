@@ -5,9 +5,6 @@ begin
  insert into public.bot_users(telegram_id,trial_used) values(uid,2);
  insert into public.bot_download_jobs(id,telegram_id,quota,delivered,trial,created_at)
  values(jid,uid,5,2,true,now());
- r := public.bot_abandon(uid);
- if not (r->>'busy')::boolean then raise exception 'recent request closed'; end if;
- update public.bot_download_jobs set created_at=now()-interval '12 minutes' where id=jid;
  r := public.bot_abandon(uid+1);
  if (r->>'closed')::integer <> 0 then raise exception 'wrong user closure'; end if;
  r := public.bot_abandon(uid);

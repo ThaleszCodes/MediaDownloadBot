@@ -249,11 +249,10 @@ memória, armazenamento temporário e tempo de transferência com um álbum pequ
 
 Aplicar `supabase/abandon.sql` e atualizar a Edge Function `bot-access`. Quando uma
 reserva anterior bloqueia um pedido, o botão “❌ Abandonar Mídias Reservadas?” abre
-uma confirmação. Apenas pedidos do usuário atual com pelo menos 11 minutos podem
-ser encerrados; o worker tem timeout de 10 minutos. Pedidos locais ativos também
-bloqueiam a ação. O encerramento é atômico e idempotente, usa o mesmo lock do
+uma confirmação. Pedidos interrompidos do usuário atual podem ser encerrados imediatamente.
+Pedidos locais ativos bloqueiam a ação. O fluxo de abandono não exibe suporte humano. O encerramento é atômico e idempotente, usa o mesmo lock do
 controle de acesso e mantém o total confirmado enviado. No teste gratuito, toda
 reserva restante é contabilizada como utilizada, explicitamente na confirmação,
 para impedir que envios sem confirmação permitam reutilizar o teste. Não altera
-assinaturas. `tests/abandon.sql` testa propriedade, prazo, contabilização,
+assinaturas. `tests/abandon.sql` testa propriedade, encerramento imediato, contabilização,
 idempotência e permissões em transação revertida.
